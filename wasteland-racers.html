@@ -30,14 +30,22 @@
     pointer-events: none;
     text-shadow: 0 0 6px rgba(255,100,0,0.5);
   }
+  /* Hidden file input for track loading */
+  #track-file-input {
+    position: absolute;
+    top: -9999px;
+    left: -9999px;
+  }
 </style>
 </head>
 <body>
 <canvas id="game"></canvas>
+<input type="file" id="track-file-input" accept=".json">
 <script>
 // ========================================
-// WASTELAND RACERS - Core Engine
+// WASTELAND RACERS - Core Engine v2
 // Inspired by Badlands (1990) & Super Off Road
+// Now with JSON track loading & zone system
 // ========================================
 
 const canvas = document.getElementById('game');
@@ -60,18 +68,34 @@ const STATE = {
 let gameState = STATE.MENU;
 let countdownTimer = 0;
 let raceTime = 0;
-let totalLaps = 3;
 
-// --- Track Definition ---
-// Track is defined as a series of waypoints forming a closed circuit
-// The track uses an isometric-like top-down view
+// --- Track State ---
+// All track data lives here - populated by default or from JSON
+let trackState = {
+  name: 'Wasteland Circuit',
+  laps: 3,
+  grid: { cols: 60, rows: 46, data: [] },
+  waypoints: [],
+  startPositions: [],
+  finishLine: null,
+  bgImage: null,
+  cellW: 15,
+  cellH: 700 / 46,
+  isCustom: false
+};
+
+// ========================================
+// DEFAULT TRACK GENERATION
+// Uses cardinal spline to create a built-in track
+// ========================================
+
 const trackColor = '#4a3a2a';
 const trackBorderColor = '#2a1a0a';
 const groundColor = '#1a1a12';
 const trackWidth = 70;
 
-// Define track as center-line waypoints
-const trackPoints = [
+// Spline waypoints for the default built-in track
+const defaultTrackPoints = [
   {x: 200, y: 120},
   {x: 380, y: 80},
   {x: 580, y: 80},
@@ -91,7 +115,6 @@ const trackPoints = [
   {x: 140, y: 160},
 ];
 
-// Smooth track with cardinal spline
 function getSplinePoints(pts, tension, numPerSeg) {
   tension = tension || 0.5;
   numPerSeg = numPerSeg || 20;
@@ -119,9 +142,6 @@ function getSplinePoints(pts, tension, numPerSeg) {
   return result;
 }
 
-const smoothTrack = getSplinePoints(trackPoints, 0.5, 25);
-
-// Pre-compute track normals
 function getTrackNormals(pts) {
   const normals = [];
   const n = pts.length;
@@ -135,9 +155,253 @@ function getTrackNormals(pts) {
   return normals;
 }
 
-const trackNormals = getTrackNormals(smoothTrack);
+// Generate default track from spline, converting to grid format
+function generateDefaultTrack() {
+  const smoothTrack = getSplinePoints(defaultTrackPoints, 0.5, 25);
+  const normals = getTrackNormals(smoothTrack);
+  const cols = 60;
+  const rows = 46;
+  const cw = W / cols;
+  const ch = H / rows;
+  const data = [];
 
-// --- Utility ---
+  // Generate grid by checking distance to spline
+  for (let r = 0; r < rows; r++) {
+    data[r] = [];
+    for (let c = 0; c < cols; c++) {
+      const cx = c * cw + cw / 2;
+      const cy = r * ch + ch / 2;
+      let minDist = Infinity;
+      for (let i = 0; i < smoothTrack.length; i++) {
+        const dx = cx - smoothTrack[i].x;
+        const dy = cy - smoothTrack[i].y;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        if (d < minDist) minDist = d;
+      }
+      if (minDist < trackWidth * 0.95) {
+        data[r][c] = 'track';
+      } else if (minDist < trackWidth * 1.1) {
+        data[r][c] = 'wall';
+      } else {
+        data[r][c] = 0;
+      }
+    }
+  }
+
+  // Add some hazard and boost zones for variety
+  // Hazard zone near middle of track
+  const hazardIdx = Math.floor(smoothTrack.length * 0.4);
+  const hazPt = smoothTrack[hazardIdx];
+  const hCol = Math.floor(hazPt.x / cw);
+  const hRow = Math.floor(hazPt.y / ch);
+  for (let dr = -1; dr <= 1; dr++) {
+    for (let dc = -1; dc <= 1; dc++) {
+      const rr = hRow + dr;
+      const cc = hCol + dc;
+      if (rr >= 0 && rr < rows && cc >= 0 && cc < cols && data[rr][cc] === 'track') {
+        data[rr][cc] = 'hazard';
+      }
+    }
+  }
+
+  // Boost zone on a straight section
+  const boostIdx = Math.floor(smoothTrack.length * 0.15);
+  const boostPt = smoothTrack[boostIdx];
+  const bCol = Math.floor(boostPt.x / cw);
+  const bRow = Math.floor(boostPt.y / ch);
+  for (let dr = -1; dr <= 0; dr++) {
+    for (let dc = -1; dc <= 1; dc++) {
+      const rr = bRow + dr;
+      const cc = bCol + dc;
+      if (rr >= 0 && rr < rows && cc >= 0 && cc < cols && data[rr][cc] === 'track') {
+        data[rr][cc] = 'boost';
+      }
+    }
+  }
+
+  // Pit zone
+  const pitIdx = Math.floor(smoothTrack.length * 0.7);
+  const pitPt = smoothTrack[pitIdx];
+  const pCol = Math.floor(pitPt.x / cw);
+  const pRow = Math.floor(pitPt.y / ch);
+  for (let dr = 0; dr <= 1; dr++) {
+    for (let dc = -1; dc <= 0; dc++) {
+      const rr = pRow + dr;
+      const cc = pCol + dc;
+      if (rr >= 0 && rr < rows && cc >= 0 && cc < cols && data[rr][cc] === 'track') {
+        data[rr][cc] = 'pit';
+      }
+    }
+  }
+
+  // Generate AI waypoints from spline (sample every Nth point)
+  const wpSpacing = Math.floor(smoothTrack.length / 30);
+  const waypoints = [];
+  for (let i = 0; i < smoothTrack.length; i += wpSpacing) {
+    waypoints.push({ x: smoothTrack[i].x, y: smoothTrack[i].y });
+  }
+
+  // Start positions
+  const startPositions = [];
+  for (let i = 0; i < 4; i++) {
+    const idx = i * 3;
+    const pt = smoothTrack[idx];
+    const n = normals[idx];
+    const nextPt = smoothTrack[(idx + 1) % smoothTrack.length];
+    startPositions.push({
+      x: pt.x + n.x * (i % 2 === 0 ? 15 : -15),
+      y: pt.y + n.y * (i % 2 === 0 ? 15 : -15),
+      angle: Math.atan2(nextPt.y - pt.y, nextPt.x - pt.x)
+    });
+  }
+
+  // Finish line at start of track
+  const startPt = smoothTrack[0];
+  const startN = normals[0];
+  const finishLine = {
+    x1: startPt.x + startN.x * trackWidth,
+    y1: startPt.y + startN.y * trackWidth,
+    x2: startPt.x - startN.x * trackWidth,
+    y2: startPt.y - startN.y * trackWidth,
+  };
+
+  trackState = {
+    name: 'Wasteland Circuit',
+    laps: 3,
+    grid: { cols, rows, data },
+    waypoints,
+    startPositions,
+    finishLine,
+    bgImage: null,
+    cellW: cw,
+    cellH: ch,
+    isCustom: false,
+    // Keep spline data for default track rendering
+    _smoothTrack: smoothTrack,
+    _normals: normals
+  };
+}
+
+// ========================================
+// TRACK JSON LOADING
+// ========================================
+
+function loadTrackFromJSON(jsonStr) {
+  try {
+    const data = JSON.parse(jsonStr);
+    if (!data.grid || !data.waypoints || !data.startPositions) {
+      alert('Invalid track file: missing required data (grid, waypoints, startPositions)');
+      return false;
+    }
+
+    const cols = data.grid.cols || 60;
+    const rows = data.grid.rows || 46;
+
+    trackState = {
+      name: data.name || 'Custom Track',
+      laps: data.laps || 3,
+      grid: {
+        cols: cols,
+        rows: rows,
+        data: data.grid.data
+      },
+      waypoints: data.waypoints,
+      startPositions: data.startPositions,
+      finishLine: data.finishLine || null,
+      bgImage: null,
+      cellW: W / cols,
+      cellH: H / rows,
+      isCustom: true
+    };
+
+    // Load background image if present
+    if (data.backgroundImage) {
+      const img = new Image();
+      img.onload = () => {
+        trackState.bgImage = img;
+      };
+      img.src = data.backgroundImage;
+    }
+
+    // Ensure we have enough start positions
+    while (trackState.startPositions.length < 4) {
+      const last = trackState.startPositions[trackState.startPositions.length - 1];
+      trackState.startPositions.push({
+        x: last.x + 20,
+        y: last.y + 10,
+        angle: last.angle || 0
+      });
+    }
+
+    // Ensure we have a finish line
+    if (!trackState.finishLine && trackState.waypoints.length >= 2) {
+      const wp0 = trackState.waypoints[0];
+      trackState.finishLine = {
+        x1: wp0.x - 40, y1: wp0.y - 40,
+        x2: wp0.x + 40, y2: wp0.y + 40
+      };
+    }
+
+    return true;
+  } catch (e) {
+    alert('Error loading track: ' + e.message);
+    return false;
+  }
+}
+
+// File input handler
+document.getElementById('track-file-input').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    if (loadTrackFromJSON(ev.target.result)) {
+      // Track loaded, start the race
+      gameState = STATE.COUNTDOWN;
+      countdownTimer = 240;
+      resetRace();
+    }
+  };
+  reader.readAsText(file);
+  e.target.value = ''; // Reset so same file can be loaded again
+});
+
+// ========================================
+// GRID UTILITIES
+// ========================================
+
+function getZoneAt(x, y) {
+  const col = Math.floor(x / trackState.cellW);
+  const row = Math.floor(y / trackState.cellH);
+  if (col < 0 || col >= trackState.grid.cols || row < 0 || row >= trackState.grid.rows) return 0;
+  return trackState.grid.data[row][col] || 0;
+}
+
+// Line segment intersection test (for finish line crossing)
+function linesIntersect(x1, y1, x2, y2, x3, y3, x4, y4) {
+  const d1x = x2 - x1, d1y = y2 - y1;
+  const d2x = x4 - x3, d2y = y4 - y3;
+  const denom = d1x * d2y - d1y * d2x;
+  if (Math.abs(denom) < 0.0001) return false;
+  const t = ((x3 - x1) * d2y - (y3 - y1) * d2x) / denom;
+  const u = ((x3 - x1) * d1y - (y3 - y1) * d1x) / denom;
+  return t >= 0 && t <= 1 && u >= 0 && u <= 1;
+}
+
+// Get crossing direction (positive = correct direction)
+function getCrossingDirection(x1, y1, x2, y2, fl) {
+  // Use cross product to determine direction of crossing
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const flDx = fl.x2 - fl.x1;
+  const flDy = fl.y2 - fl.y1;
+  return dx * flDy - dy * flDx;
+}
+
+// ========================================
+// UTILITY FUNCTIONS
+// ========================================
+
 function dist(a, b) {
   return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
 }
@@ -150,54 +414,67 @@ function lerp(a, b, t) {
   return a + (b - a) * t;
 }
 
-function closestTrackPoint(pos) {
-  let minD = Infinity;
-  let minI = 0;
-  for (let i = 0; i < smoothTrack.length; i++) {
-    const d = dist(pos, smoothTrack[i]);
-    if (d < minD) { minD = d; minI = i; }
-  }
-  return { index: minI, dist: minD };
+function normalizeAngle(a) {
+  while (a > Math.PI) a -= Math.PI * 2;
+  while (a < -Math.PI) a += Math.PI * 2;
+  return a;
 }
 
-// --- Obstacles ---
+// ========================================
+// OBSTACLES & PICKUPS
+// ========================================
+
 const obstacles = [];
 const pickups = [];
 
 function generateObstacles() {
   obstacles.length = 0;
   pickups.length = 0;
-  // Add mines at random track positions
-  for (let i = 0; i < 5; i++) {
-    const idx = Math.floor(Math.random() * smoothTrack.length);
-    const pt = smoothTrack[idx];
-    const n = trackNormals[idx];
-    const offset = (Math.random() - 0.5) * trackWidth * 0.6;
-    obstacles.push({
-      x: pt.x + n.x * offset,
-      y: pt.y + n.y * offset,
-      type: 'mine',
-      radius: 8,
-      active: true
-    });
+
+  // Place mines on track zones
+  let attempts = 0;
+  let minesPlaced = 0;
+  while (minesPlaced < 5 && attempts < 200) {
+    const x = Math.random() * W;
+    const y = Math.random() * H;
+    if (getZoneAt(x, y) === 'track') {
+      // Don't place near start positions
+      let nearStart = false;
+      for (const sp of trackState.startPositions) {
+        if (dist({x, y}, sp) < 80) { nearStart = true; break; }
+      }
+      if (!nearStart) {
+        obstacles.push({ x, y, type: 'mine', radius: 8, active: true });
+        minesPlaced++;
+      }
+    }
+    attempts++;
   }
-  // Add wrench pickups
-  for (let i = 0; i < 3; i++) {
-    const idx = Math.floor(Math.random() * smoothTrack.length);
-    const pt = smoothTrack[idx];
-    const n = trackNormals[idx];
-    const offset = (Math.random() - 0.5) * trackWidth * 0.4;
-    pickups.push({
-      x: pt.x + n.x * offset,
-      y: pt.y + n.y * offset,
-      type: 'wrench',
-      radius: 10,
-      active: true
-    });
+
+  // Place wrench pickups on track
+  attempts = 0;
+  let wrenchesPlaced = 0;
+  while (wrenchesPlaced < 3 && attempts < 200) {
+    const x = Math.random() * W;
+    const y = Math.random() * H;
+    if (getZoneAt(x, y) === 'track') {
+      let nearStart = false;
+      for (const sp of trackState.startPositions) {
+        if (dist({x, y}, sp) < 60) { nearStart = true; break; }
+      }
+      if (!nearStart) {
+        pickups.push({ x, y, type: 'wrench', radius: 10, active: true });
+        wrenchesPlaced++;
+      }
+    }
+    attempts++;
   }
 }
 
-// --- Car Class ---
+// ========================================
+// CAR CLASS
+// ========================================
+
 class Car {
   constructor(color, name, isPlayer) {
     this.color = color;
@@ -216,15 +493,18 @@ class Car {
     this.width = 18;
     this.height = 12;
     this.lap = 0;
-    this.trackIndex = 0;
-    this.lastCheckpoint = 0;
     this.finished = false;
     this.finishTime = 0;
+
+    // Previous position for finish line detection
+    this.prevX = 0;
+    this.prevY = 0;
 
     // Combat
     this.ammo = 10;
     this.missiles = 0;
     this.cooldown = 0;
+    this.missileCooldown = 0;
     this.health = 100;
     this.stunTimer = 0;
     this.respawnTimer = 0;
@@ -237,6 +517,11 @@ class Car {
     // AI
     this.aiTargetIndex = 0;
     this.aiSteerNoise = 0;
+    this.aiPersonality = {
+      aggression: 0.3 + Math.random() * 0.5,
+      accuracy: 0.7 + Math.random() * 0.3,
+      nitroFreq: 0.002 + Math.random() * 0.004
+    };
 
     // Visual
     this.dustParticles = [];
@@ -248,6 +533,7 @@ class Car {
     // Position tracking
     this.position = 0;
     this.totalProgress = 0;
+    this.waypointProgress = 0;
   }
 
   applyUpgrades() {
@@ -256,16 +542,15 @@ class Car {
     this.turnSpeed = 0.04 + this.tireUpgrade * 0.005;
   }
 
-  reset(startIndex) {
-    const pt = smoothTrack[startIndex];
-    const next = smoothTrack[(startIndex + 1) % smoothTrack.length];
-    this.x = pt.x;
-    this.y = pt.y;
-    this.angle = angleBetween(pt, next);
+  reset(index) {
+    const sp = trackState.startPositions[index] || trackState.startPositions[0];
+    this.x = sp.x;
+    this.y = sp.y;
+    this.prevX = sp.x;
+    this.prevY = sp.y;
+    this.angle = sp.angle || 0;
     this.speed = 0;
     this.lap = 0;
-    this.trackIndex = startIndex;
-    this.lastCheckpoint = startIndex;
     this.finished = false;
     this.finishTime = 0;
     this.health = 100;
@@ -273,6 +558,20 @@ class Car {
     this.respawnTimer = 0;
     this.ammo = 10;
     this.totalProgress = 0;
+    this.waypointProgress = 0;
+    this.dustParticles = [];
+
+    // AI: find nearest waypoint
+    if (!this.isPlayer && trackState.waypoints.length > 0) {
+      let minD = Infinity;
+      let minI = 0;
+      for (let i = 0; i < trackState.waypoints.length; i++) {
+        const d = dist(this, trackState.waypoints[i]);
+        if (d < minD) { minD = d; minI = i; }
+      }
+      this.aiTargetIndex = (minI + 2) % trackState.waypoints.length;
+    }
+
     this.applyUpgrades();
   }
 
@@ -292,8 +591,12 @@ class Car {
     }
     if (this.finished) return;
 
+    // Save previous position for finish line detection
+    this.prevX = this.x;
+    this.prevY = this.y;
+
     if (this.isPlayer) {
-      this.updatePlayer(keys, dt, bullets);
+      this.updatePlayer(keys, dt, bullets, cars);
     } else {
       this.updateAI(dt, cars, bullets);
     }
@@ -311,35 +614,25 @@ class Car {
     this.x += Math.cos(this.angle) * this.speed;
     this.y += Math.sin(this.angle) * this.speed;
 
-    // Track check
-    const closest = closestTrackPoint(this);
-    if (closest.dist > trackWidth) {
-      this.speed *= this.offTrackFriction;
-      // Push back onto track
-      const tp = smoothTrack[closest.index];
-      const dx = tp.x - this.x;
-      const dy = tp.y - this.y;
-      const d = Math.sqrt(dx * dx + dy * dy);
-      if (d > 0) {
-        this.x += (dx / d) * 0.5;
-        this.y += (dy / d) * 0.5;
-      }
-    }
+    // Grid-based zone collision
+    const zone = getZoneAt(this.x, this.y);
+    this.applyZoneEffect(zone);
 
+    // Apply base friction
     this.speed *= this.friction;
 
     // Clamp position
     this.x = Math.max(10, Math.min(W - 10, this.x));
     this.y = Math.max(10, Math.min(H - 10, this.y));
 
-    // Update track progress
-    this.trackIndex = closest.index;
-    this.updateLapProgress();
+    // Finish line lap counting
+    this.checkFinishLine();
 
     // Cooldown
     if (this.cooldown > 0) this.cooldown -= dt;
+    if (this.missileCooldown > 0) this.missileCooldown -= dt;
 
-    // Dust
+    // Dust particles
     if (Math.abs(this.speed) > 1) {
       if (Math.random() < 0.3) {
         this.dustParticles.push({
@@ -367,11 +660,7 @@ class Car {
           obs.active = false;
           explosions.push(createExplosion(obs.x, obs.y));
           if (this.health <= 0) {
-            this.respawnTimer = 120;
-            // Respawn near track
-            const tp = smoothTrack[this.trackIndex];
-            this.x = tp.x;
-            this.y = tp.y;
+            this.respawn();
           }
         }
       }
@@ -405,7 +694,103 @@ class Car {
     }
   }
 
-  updatePlayer(keys, dt, bullets) {
+  applyZoneEffect(zone) {
+    switch (zone) {
+      case 'wall':
+        // Bounce back - reverse movement and reduce speed
+        this.x = this.prevX;
+        this.y = this.prevY;
+        this.speed *= -0.3;
+        break;
+      case 'hazard':
+        // Slow down and take damage over time
+        this.speed *= 0.96;
+        if (Math.random() < 0.02) {
+          this.health -= 1;
+          if (this.health <= 0) this.respawn();
+        }
+        break;
+      case 'boost':
+        // Speed boost
+        this.speed = Math.min(this.speed + 0.15, this.maxSpeed * 1.4);
+        break;
+      case 'pit':
+        // Heal and slow slightly
+        this.health = Math.min(100, this.health + 0.3);
+        this.speed *= 0.99;
+        break;
+      case 'track':
+        // Normal surface - no special effect
+        break;
+      default:
+        // Off-track (0 or empty) - heavy friction
+        this.speed *= this.offTrackFriction;
+        break;
+    }
+  }
+
+  respawn() {
+    this.respawnTimer = 120;
+    this.health = 0;
+    // Respawn at nearest waypoint
+    if (trackState.waypoints.length > 0) {
+      let minD = Infinity;
+      let minWP = trackState.waypoints[0];
+      for (const wp of trackState.waypoints) {
+        const d = dist(this, wp);
+        if (d < minD) { minD = d; minWP = wp; }
+      }
+      this.x = minWP.x;
+      this.y = minWP.y;
+    }
+  }
+
+  checkFinishLine() {
+    if (!trackState.finishLine) return;
+    const fl = trackState.finishLine;
+
+    // Check if car path crosses the finish line
+    const crossed = linesIntersect(
+      this.prevX, this.prevY, this.x, this.y,
+      fl.x1, fl.y1, fl.x2, fl.y2
+    );
+
+    if (crossed) {
+      const dir = getCrossingDirection(this.prevX, this.prevY, this.x, this.y, fl);
+      if (dir > 0) {
+        // Forward crossing
+        this.lap++;
+        if (this.lap >= trackState.laps && !this.finished) {
+          this.finished = true;
+          this.finishTime = raceTime;
+        }
+      } else if (dir < 0 && this.lap > 0) {
+        // Backward crossing
+        this.lap--;
+      }
+    }
+
+    // Update total progress for position tracking
+    this.updateProgress();
+  }
+
+  updateProgress() {
+    // Progress = completed laps + fractional progress based on nearest waypoint
+    if (trackState.waypoints.length === 0) {
+      this.totalProgress = this.lap;
+      return;
+    }
+    let minD = Infinity;
+    let minI = 0;
+    for (let i = 0; i < trackState.waypoints.length; i++) {
+      const d = dist(this, trackState.waypoints[i]);
+      if (d < minD) { minD = d; minI = i; }
+    }
+    this.waypointProgress = minI;
+    this.totalProgress = this.lap * trackState.waypoints.length + minI;
+  }
+
+  updatePlayer(keys, dt, bullets, cars) {
     if (keys['ArrowUp'] || keys['w']) {
       this.speed += this.acceleration;
     }
@@ -423,10 +808,16 @@ class Car {
       this.angle += this.turnSpeed * turnFactor;
     }
 
-    // Shoot
+    // Shoot cannon
     if (keys[' '] && this.cooldown <= 0 && this.ammo > 0) {
-      this.shoot(bullets);
+      this.shootCannon(bullets);
       keys[' '] = false;
+    }
+
+    // Shoot missile
+    if (keys['m'] && this.missileCooldown <= 0 && this.missiles > 0) {
+      this.shootMissile(bullets, cars);
+      keys['m'] = false;
     }
 
     // Nitro
@@ -439,25 +830,39 @@ class Car {
   }
 
   updateAI(dt, cars, bullets) {
-    // Follow track waypoints
-    const lookAhead = 15;
-    const targetIdx = (this.trackIndex + lookAhead) % smoothTrack.length;
-    const target = smoothTrack[targetIdx];
+    if (trackState.waypoints.length === 0) return;
 
-    const targetAngle = angleBetween(this, target);
-    let angleDiff = targetAngle - this.angle;
-    while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
-    while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+    // Follow waypoints
+    const target = trackState.waypoints[this.aiTargetIndex];
+    const distToTarget = dist(this, target);
 
-    // Add some noise for variety
+    // Advance to next waypoint when close enough
+    if (distToTarget < 40) {
+      this.aiTargetIndex = (this.aiTargetIndex + 1) % trackState.waypoints.length;
+    }
+
+    // Look ahead a few waypoints for smoother steering
+    const lookAheadIdx = (this.aiTargetIndex + 2) % trackState.waypoints.length;
+    const lookAheadTarget = trackState.waypoints[lookAheadIdx];
+
+    // Blend between current and look-ahead target
+    const steerTarget = {
+      x: lerp(target.x, lookAheadTarget.x, 0.3),
+      y: lerp(target.y, lookAheadTarget.y, 0.3)
+    };
+
+    const targetAngle = angleBetween(this, steerTarget);
+    let angleDiff = normalizeAngle(targetAngle - this.angle);
+
+    // Steering noise for variety
     this.aiSteerNoise += (Math.random() - 0.5) * 0.005;
     this.aiSteerNoise *= 0.98;
 
-    const steer = Math.max(-this.turnSpeed, Math.min(this.turnSpeed, angleDiff * 0.15 + this.aiSteerNoise));
+    const steer = Math.max(-this.turnSpeed, Math.min(this.turnSpeed,
+      angleDiff * 0.15 * this.aiPersonality.accuracy + this.aiSteerNoise));
     this.angle += steer;
 
     // Accelerate
-    const distToTarget = dist(this, target);
     if (Math.abs(angleDiff) < 0.8) {
       this.speed += this.acceleration * 0.9;
     } else {
@@ -466,32 +871,35 @@ class Car {
     if (this.speed > this.maxSpeed * 0.92) this.speed = this.maxSpeed * 0.92;
 
     // AI shooting - shoot at nearby cars ahead
-    if (this.cooldown <= 0 && this.ammo > 0 && Math.random() < 0.02) {
+    if (this.cooldown <= 0 && this.ammo > 0 && Math.random() < 0.02 * this.aiPersonality.aggression) {
       for (const other of cars) {
         if (other === this) continue;
         const d = dist(this, other);
         if (d < 150) {
           const aToOther = angleBetween(this, other);
-          let aDiff = aToOther - this.angle;
-          while (aDiff > Math.PI) aDiff -= Math.PI * 2;
-          while (aDiff < -Math.PI) aDiff += Math.PI * 2;
+          let aDiff = normalizeAngle(aToOther - this.angle);
           if (Math.abs(aDiff) < 0.5) {
-            this.shoot(bullets);
+            this.shootCannon(bullets);
             break;
           }
         }
       }
     }
 
+    // AI missile usage
+    if (this.missileCooldown <= 0 && this.missiles > 0 && Math.random() < 0.005 * this.aiPersonality.aggression) {
+      this.shootMissile(bullets, cars);
+    }
+
     // AI nitro occasionally
-    if (this.nitro > 0 && !this.nitroActive && Math.random() < 0.003) {
+    if (this.nitro > 0 && !this.nitroActive && Math.random() < this.aiPersonality.nitroFreq) {
       this.nitroActive = true;
       this.nitroTimer = 30;
       this.nitro--;
     }
   }
 
-  shoot(bullets) {
+  shootCannon(bullets) {
     if (this.cooldown > 0 || this.ammo <= 0) return;
     bullets.push({
       x: this.x + Math.cos(this.angle) * 15,
@@ -500,34 +908,41 @@ class Car {
       vy: Math.sin(this.angle) * 6 + this.speed * Math.sin(this.angle) * 0.3,
       owner: this,
       life: 60,
-      isMissile: false
+      isMissile: false,
+      target: null
     });
     this.ammo--;
     this.cooldown = 12;
   }
 
-  updateLapProgress() {
-    const n = smoothTrack.length;
-    const halfTrack = n / 2;
-    const diff = this.trackIndex - this.lastCheckpoint;
+  shootMissile(bullets, cars) {
+    if (this.missileCooldown > 0 || this.missiles <= 0) return;
 
-    if (diff > 5 && diff < halfTrack) {
-      this.lastCheckpoint = this.trackIndex;
-    } else if (diff < -halfTrack + 20 && this.lastCheckpoint > halfTrack) {
-      // Crossed start line forwards
-      this.lap++;
-      this.lastCheckpoint = this.trackIndex;
-      if (this.lap >= totalLaps && !this.finished) {
-        this.finished = true;
-        this.finishTime = raceTime;
+    // Find nearest opponent to target
+    let nearestCar = null;
+    let nearestDist = Infinity;
+    for (const other of cars) {
+      if (other === this) continue;
+      const d = dist(this, other);
+      if (d < nearestDist && d < 400) {
+        nearestDist = d;
+        nearestCar = other;
       }
-    } else if (diff > halfTrack - 20 && this.lastCheckpoint < n * 0.3) {
-      // Going backwards past start
-      if (this.lap > 0) this.lap--;
-      this.lastCheckpoint = this.trackIndex;
     }
 
-    this.totalProgress = this.lap * n + this.trackIndex;
+    bullets.push({
+      x: this.x + Math.cos(this.angle) * 15,
+      y: this.y + Math.sin(this.angle) * 15,
+      vx: Math.cos(this.angle) * 4,
+      vy: Math.sin(this.angle) * 4,
+      owner: this,
+      life: 180, // Missiles last longer
+      isMissile: true,
+      target: nearestCar, // Homing target
+      turnRate: 0.06
+    });
+    this.missiles--;
+    this.missileCooldown = 60;
   }
 
   draw(ctx) {
@@ -541,7 +956,6 @@ class Car {
     }
 
     if (this.respawnTimer > 0) {
-      // Blinking effect
       if (Math.floor(this.respawnTimer / 5) % 2 === 0) return;
     }
 
@@ -564,6 +978,13 @@ class Car {
     // Cannon
     ctx.fillStyle = '#444';
     ctx.fillRect(this.width / 2 - 2, -2, 6, 4);
+
+    // Missile launcher indicator
+    if (this.missiles > 0) {
+      ctx.fillStyle = '#a00';
+      ctx.fillRect(this.width / 2 - 2, -5, 4, 2);
+      ctx.fillRect(this.width / 2 - 2, 3, 4, 2);
+    }
 
     // Nitro flame
     if (this.nitroActive) {
@@ -599,7 +1020,10 @@ class Car {
   }
 }
 
-// --- Explosions ---
+// ========================================
+// EXPLOSIONS
+// ========================================
+
 let explosions = [];
 
 function createExplosion(x, y) {
@@ -620,29 +1044,50 @@ function createExplosion(x, y) {
   return { particles };
 }
 
-// --- Bullets ---
+// ========================================
+// BULLETS & MISSILES
+// ========================================
+
 let bullets = [];
 
 function updateBullets(cars) {
   bullets = bullets.filter(b => {
+    // Missile homing behavior
+    if (b.isMissile && b.target && b.target.health > 0 && b.target.respawnTimer <= 0) {
+      const targetAngle = angleBetween(b, b.target);
+      const currentAngle = Math.atan2(b.vy, b.vx);
+      let angleDiff = normalizeAngle(targetAngle - currentAngle);
+      const turn = Math.max(-b.turnRate, Math.min(b.turnRate, angleDiff));
+      const newAngle = currentAngle + turn;
+      const speed = Math.sqrt(b.vx * b.vx + b.vy * b.vy);
+      b.vx = Math.cos(newAngle) * speed;
+      b.vy = Math.sin(newAngle) * speed;
+      // Missiles accelerate slightly
+      b.vx *= 1.005;
+      b.vy *= 1.005;
+    }
+
     b.x += b.vx;
     b.y += b.vy;
     b.life--;
+
+    // Check wall collision
+    if (getZoneAt(b.x, b.y) === 'wall') {
+      explosions.push(createExplosion(b.x, b.y));
+      return false;
+    }
 
     // Check car hits
     for (const car of cars) {
       if (car === b.owner) continue;
       if (dist(b, car) < 14) {
-        car.health -= 15;
-        car.stunTimer = 15;
-        car.speed *= 0.5;
+        const damage = b.isMissile ? 35 : 15;
+        car.health -= damage;
+        car.stunTimer = b.isMissile ? 30 : 15;
+        car.speed *= b.isMissile ? 0.2 : 0.5;
         explosions.push(createExplosion(b.x, b.y));
         if (car.health <= 0) {
-          car.respawnTimer = 120;
-          const tp = smoothTrack[car.trackIndex];
-          car.x = tp.x;
-          car.y = tp.y;
-          car.health = 0;
+          car.respawn();
         }
         return false;
       }
@@ -657,27 +1102,111 @@ function updateBullets(cars) {
 
 function drawBullets() {
   for (const b of bullets) {
-    ctx.fillStyle = b.isMissile ? '#ff0000' : '#ffff00';
-    ctx.beginPath();
-    ctx.arc(b.x, b.y, b.isMissile ? 4 : 2, 0, Math.PI * 2);
-    ctx.fill();
-    // Trail
-    ctx.strokeStyle = b.isMissile ? 'rgba(255,0,0,0.4)' : 'rgba(255,255,0,0.3)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(b.x, b.y);
-    ctx.lineTo(b.x - b.vx * 3, b.y - b.vy * 3);
-    ctx.stroke();
+    if (b.isMissile) {
+      // Missile: red triangle shape
+      const angle = Math.atan2(b.vy, b.vx);
+      ctx.save();
+      ctx.translate(b.x, b.y);
+      ctx.rotate(angle);
+      ctx.fillStyle = '#ff0000';
+      ctx.beginPath();
+      ctx.moveTo(5, 0);
+      ctx.lineTo(-4, -3);
+      ctx.lineTo(-4, 3);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+
+      // Missile trail
+      ctx.strokeStyle = 'rgba(255,100,0,0.6)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(b.x, b.y);
+      ctx.lineTo(b.x - b.vx * 4, b.y - b.vy * 4);
+      ctx.stroke();
+      // Smoke puffs
+      if (Math.random() < 0.5) {
+        ctx.fillStyle = 'rgba(150,150,150,0.3)';
+        ctx.beginPath();
+        ctx.arc(b.x - b.vx * 3 + (Math.random() - 0.5) * 4,
+                b.y - b.vy * 3 + (Math.random() - 0.5) * 4,
+                2 + Math.random() * 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    } else {
+      // Cannon bullet: yellow dot
+      ctx.fillStyle = '#ffff00';
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, 2, 0, Math.PI * 2);
+      ctx.fill();
+      // Trail
+      ctx.strokeStyle = 'rgba(255,255,0,0.3)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(b.x, b.y);
+      ctx.lineTo(b.x - b.vx * 3, b.y - b.vy * 3);
+      ctx.stroke();
+    }
   }
 }
 
-// --- Draw Track ---
+// ========================================
+// TRACK RENDERING
+// ========================================
+
+// Zone rendering colors (more opaque for default, semi-transparent for custom)
+const ZONE_RENDER_COLORS = {
+  track:  { default: '#4a3a2a', overlay: 'rgba(0,180,0,0.15)' },
+  wall:   { default: '#2a1a0a', overlay: 'rgba(180,0,0,0.25)' },
+  hazard: { default: '#5a5a10', overlay: 'rgba(180,180,0,0.3)' },
+  boost:  { default: '#2a3a5a', overlay: 'rgba(0,150,255,0.25)' },
+  pit:    { default: '#3a2a4a', overlay: 'rgba(150,0,180,0.25)' },
+};
+
 function drawTrack() {
+  const ts = trackState;
+
+  if (ts.isCustom) {
+    // Custom track: draw background image + zone overlay
+    drawCustomTrack();
+  } else {
+    // Default track: draw with built-in styling
+    drawDefaultTrack();
+  }
+
+  // Draw finish line
+  if (ts.finishLine) {
+    const fl = ts.finishLine;
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(fl.x1, fl.y1);
+    ctx.lineTo(fl.x2, fl.y2);
+    ctx.stroke();
+
+    // Checkerboard
+    const dx = fl.x2 - fl.x1;
+    const dy = fl.y2 - fl.y1;
+    const len = Math.sqrt(dx * dx + dy * dy);
+    const steps = Math.floor(len / 8);
+    for (let i = 0; i < steps; i++) {
+      const t = i / steps;
+      const px = fl.x1 + dx * t;
+      const py = fl.y1 + dy * t;
+      ctx.fillStyle = i % 2 === 0 ? '#eee' : '#222';
+      ctx.fillRect(px - 3, py - 3, 6, 6);
+    }
+  }
+}
+
+function drawDefaultTrack() {
+  const ts = trackState;
+
   // Ground
   ctx.fillStyle = groundColor;
   ctx.fillRect(0, 0, W, H);
 
-  // Ground texture - scattered debris/rocks
+  // Ground texture
   ctx.fillStyle = '#222218';
   for (let i = 0; i < 80; i++) {
     const rx = (i * 137.5 + 50) % W;
@@ -685,119 +1214,143 @@ function drawTrack() {
     ctx.fillRect(rx, ry, 2 + (i % 3), 2 + (i % 2));
   }
 
-  // Track surface
-  ctx.strokeStyle = trackColor;
-  ctx.lineWidth = trackWidth * 2;
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-  ctx.beginPath();
-  ctx.moveTo(smoothTrack[0].x, smoothTrack[0].y);
-  for (let i = 1; i < smoothTrack.length; i++) {
-    ctx.lineTo(smoothTrack[i].x, smoothTrack[i].y);
-  }
-  ctx.closePath();
-  ctx.stroke();
-
-  // Track borders (inner and outer edges)
-  ctx.strokeStyle = trackBorderColor;
-  ctx.lineWidth = 3;
-  // Outer edge
-  ctx.beginPath();
-  for (let i = 0; i < smoothTrack.length; i++) {
-    const p = smoothTrack[i];
-    const n = trackNormals[i];
-    const ox = p.x + n.x * trackWidth;
-    const oy = p.y + n.y * trackWidth;
-    if (i === 0) ctx.moveTo(ox, oy);
-    else ctx.lineTo(ox, oy);
-  }
-  ctx.closePath();
-  ctx.stroke();
-
-  // Inner edge
-  ctx.beginPath();
-  for (let i = 0; i < smoothTrack.length; i++) {
-    const p = smoothTrack[i];
-    const n = trackNormals[i];
-    const ox = p.x - n.x * trackWidth;
-    const oy = p.y - n.y * trackWidth;
-    if (i === 0) ctx.moveTo(ox, oy);
-    else ctx.lineTo(ox, oy);
-  }
-  ctx.closePath();
-  ctx.stroke();
-
-  // Track markings - dashed center line
-  ctx.strokeStyle = 'rgba(100,90,70,0.3)';
-  ctx.lineWidth = 1;
-  ctx.setLineDash([8, 12]);
-  ctx.beginPath();
-  ctx.moveTo(smoothTrack[0].x, smoothTrack[0].y);
-  for (let i = 1; i < smoothTrack.length; i++) {
-    ctx.lineTo(smoothTrack[i].x, smoothTrack[i].y);
-  }
-  ctx.closePath();
-  ctx.stroke();
-  ctx.setLineDash([]);
-
-  // Start/finish line
-  const startPt = smoothTrack[0];
-  const startN = trackNormals[0];
-  ctx.strokeStyle = '#fff';
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.moveTo(startPt.x + startN.x * trackWidth, startPt.y + startN.y * trackWidth);
-  ctx.lineTo(startPt.x - startN.x * trackWidth, startPt.y - startN.y * trackWidth);
-  ctx.stroke();
-
-  // Checkerboard pattern at start
-  const sw = 8;
-  for (let r = 0; r < 3; r++) {
-    for (let c = 0; c < 6; c++) {
-      const t = (c - 3) / 3;
-      const px = startPt.x + startN.x * trackWidth * t + (r - 1) * Math.cos(angleBetween(startPt, smoothTrack[1])) * sw;
-      const py = startPt.y + startN.y * trackWidth * t + (r - 1) * Math.sin(angleBetween(startPt, smoothTrack[1])) * sw;
-      ctx.fillStyle = (r + c) % 2 === 0 ? '#eee' : '#222';
-      ctx.fillRect(px - sw / 2, py - sw / 2, sw, sw);
+  // Draw zones from grid
+  for (let r = 0; r < ts.grid.rows; r++) {
+    for (let c = 0; c < ts.grid.cols; c++) {
+      const zone = ts.grid.data[r][c];
+      if (zone && ZONE_RENDER_COLORS[zone]) {
+        ctx.fillStyle = ZONE_RENDER_COLORS[zone].default;
+        ctx.fillRect(c * ts.cellW, r * ts.cellH, ts.cellW + 0.5, ts.cellH + 0.5);
+      }
     }
   }
 
-  // Draw environment decorations
+  // Draw special zone indicators
+  for (let r = 0; r < ts.grid.rows; r++) {
+    for (let c = 0; c < ts.grid.cols; c++) {
+      const zone = ts.grid.data[r][c];
+      const cx = c * ts.cellW + ts.cellW / 2;
+      const cy = r * ts.cellH + ts.cellH / 2;
+
+      if (zone === 'hazard') {
+        // Yellow warning stripes
+        ctx.fillStyle = 'rgba(200,180,0,0.3)';
+        ctx.fillRect(c * ts.cellW, r * ts.cellH, ts.cellW + 0.5, ts.cellH + 0.5);
+      } else if (zone === 'boost') {
+        // Blue arrows
+        ctx.fillStyle = 'rgba(0,120,255,0.2)';
+        ctx.fillRect(c * ts.cellW, r * ts.cellH, ts.cellW + 0.5, ts.cellH + 0.5);
+        // Arrow symbol
+        if ((r + c) % 3 === 0) {
+          ctx.fillStyle = 'rgba(100,200,255,0.4)';
+          ctx.font = '8px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText('>', cx, cy + 3);
+          ctx.textAlign = 'left';
+        }
+      } else if (zone === 'pit') {
+        // Purple cross
+        ctx.fillStyle = 'rgba(180,50,220,0.2)';
+        ctx.fillRect(c * ts.cellW, r * ts.cellH, ts.cellW + 0.5, ts.cellH + 0.5);
+        if ((r + c) % 3 === 0) {
+          ctx.fillStyle = 'rgba(200,100,255,0.5)';
+          ctx.font = '8px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText('+', cx, cy + 3);
+          ctx.textAlign = 'left';
+        }
+      }
+    }
+  }
+
+  // Track border effect - draw wall outlines
+  ctx.strokeStyle = trackBorderColor;
+  ctx.lineWidth = 1;
+  for (let r = 0; r < ts.grid.rows; r++) {
+    for (let c = 0; c < ts.grid.cols; c++) {
+      if (ts.grid.data[r][c] === 'wall') {
+        // Only draw border on edges adjacent to track
+        const x = c * ts.cellW;
+        const y = r * ts.cellH;
+        if (c > 0 && ts.grid.data[r][c - 1] === 'track') {
+          ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y + ts.cellH); ctx.stroke();
+        }
+        if (c < ts.grid.cols - 1 && ts.grid.data[r][c + 1] === 'track') {
+          ctx.beginPath(); ctx.moveTo(x + ts.cellW, y); ctx.lineTo(x + ts.cellW, y + ts.cellH); ctx.stroke();
+        }
+        if (r > 0 && ts.grid.data[r - 1][c] === 'track') {
+          ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + ts.cellW, y); ctx.stroke();
+        }
+        if (r < ts.grid.rows - 1 && ts.grid.data[r + 1][c] === 'track') {
+          ctx.beginPath(); ctx.moveTo(x, y + ts.cellH); ctx.lineTo(x + ts.cellW, y + ts.cellH); ctx.stroke();
+        }
+      }
+    }
+  }
+
+  // Environment decorations
   drawEnvironment();
 }
 
+function drawCustomTrack() {
+  const ts = trackState;
+
+  // Background image or dark ground
+  if (ts.bgImage) {
+    ctx.drawImage(ts.bgImage, 0, 0, W, H);
+  } else {
+    ctx.fillStyle = '#1a1a12';
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  // Semi-transparent zone overlay
+  for (let r = 0; r < ts.grid.rows; r++) {
+    for (let c = 0; c < ts.grid.cols; c++) {
+      const zone = ts.grid.data[r][c];
+      if (zone && ZONE_RENDER_COLORS[zone]) {
+        ctx.fillStyle = ZONE_RENDER_COLORS[zone].overlay;
+        ctx.fillRect(c * ts.cellW, r * ts.cellH, ts.cellW + 0.5, ts.cellH + 0.5);
+      }
+    }
+  }
+}
+
 function drawEnvironment() {
-  // Rusty barrels
+  // Rusty barrels (positioned in off-track areas)
   const barrels = [
     {x: 450, y: 300}, {x: 460, y: 310}, {x: 455, y: 320},
     {x: 300, y: 200}, {x: 650, y: 400},
     {x: 500, y: 150}, {x: 180, y: 450}
   ];
   for (const b of barrels) {
-    ctx.fillStyle = '#654321';
-    ctx.beginPath();
-    ctx.arc(b.x, b.y, 6, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = '#432';
-    ctx.lineWidth = 1;
-    ctx.stroke();
-    ctx.fillStyle = '#543210';
-    ctx.fillRect(b.x - 4, b.y - 1, 8, 2);
+    if (getZoneAt(b.x, b.y) !== 'track') {
+      ctx.fillStyle = '#654321';
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#432';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.fillStyle = '#543210';
+      ctx.fillRect(b.x - 4, b.y - 1, 8, 2);
+    }
   }
 
-  // Wrecked cars (static decoration)
+  // Wrecked cars
   const wrecks = [
     {x: 430, y: 280, a: 0.5}, {x: 550, y: 350, a: 1.2}, {x: 250, y: 380, a: 2.1}
   ];
   for (const w of wrecks) {
-    ctx.save();
-    ctx.translate(w.x, w.y);
-    ctx.rotate(w.a);
-    ctx.fillStyle = '#3a3a3a';
-    ctx.fillRect(-12, -7, 24, 14);
-    ctx.fillStyle = '#2a2a2a';
-    ctx.fillRect(-8, -5, 16, 10);
-    ctx.restore();
+    if (getZoneAt(w.x, w.y) !== 'track') {
+      ctx.save();
+      ctx.translate(w.x, w.y);
+      ctx.rotate(w.a);
+      ctx.fillStyle = '#3a3a3a';
+      ctx.fillRect(-12, -7, 24, 14);
+      ctx.fillStyle = '#2a2a2a';
+      ctx.fillRect(-8, -5, 16, 10);
+      ctx.restore();
+    }
   }
 
   // Warning signs
@@ -809,14 +1362,8 @@ function drawEnvironment() {
   // Pipes along edges
   ctx.strokeStyle = '#555';
   ctx.lineWidth = 4;
-  ctx.beginPath();
-  ctx.moveTo(50, 50);
-  ctx.lineTo(50, 650);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(850, 50);
-  ctx.lineTo(850, 650);
-  ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(50, 50); ctx.lineTo(50, 650); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(850, 50); ctx.lineTo(850, 650); ctx.stroke();
 
   // Tower structures
   drawTower(60, 60);
@@ -830,14 +1377,12 @@ function drawTower(x, y) {
   ctx.fillRect(x - 8, y - 8, 16, 16);
   ctx.fillStyle = '#333';
   ctx.fillRect(x - 5, y - 20, 10, 12);
-  // Antenna
   ctx.strokeStyle = '#666';
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(x, y - 20);
   ctx.lineTo(x, y - 30);
   ctx.stroke();
-  // Blinking light
   if (Math.floor(Date.now() / 500) % 2 === 0) {
     ctx.fillStyle = '#f00';
     ctx.beginPath();
@@ -846,7 +1391,10 @@ function drawTower(x, y) {
   }
 }
 
-// --- Draw Obstacles ---
+// ========================================
+// DRAW OBSTACLES & PICKUPS
+// ========================================
+
 function drawObstacles() {
   for (const obs of obstacles) {
     if (!obs.active) continue;
@@ -858,7 +1406,6 @@ function drawObstacles() {
       ctx.strokeStyle = '#ff0000';
       ctx.lineWidth = 1;
       ctx.stroke();
-      // Blinking
       if (Math.floor(Date.now() / 300) % 2 === 0) {
         ctx.fillStyle = '#ff0000';
         ctx.beginPath();
@@ -877,7 +1424,6 @@ function drawObstacles() {
       ctx.fillRect(-3, -8, 6, 16);
       ctx.fillRect(-8, -3, 16, 6);
       ctx.restore();
-      // Glow
       ctx.fillStyle = 'rgba(200,200,255,0.15)';
       ctx.beginPath();
       ctx.arc(p.x, p.y, 14, 0, Math.PI * 2);
@@ -886,7 +1432,10 @@ function drawObstacles() {
   }
 }
 
-// --- Draw Explosions ---
+// ========================================
+// DRAW EXPLOSIONS
+// ========================================
+
 function drawExplosions() {
   explosions = explosions.filter(e => {
     let alive = false;
@@ -911,9 +1460,11 @@ function drawExplosions() {
   });
 }
 
-// --- HUD ---
+// ========================================
+// HUD
+// ========================================
+
 function drawHUD(player, cars) {
-  // Sort cars by position
   const sorted = [...cars].sort((a, b) => b.totalProgress - a.totalProgress);
   const playerPos = sorted.indexOf(player) + 1;
 
@@ -928,63 +1479,87 @@ function drawHUD(player, cars) {
   ctx.fillText(`POS: ${playerPos}/${cars.length}`, 20, H - 30);
 
   // Lap
-  ctx.fillText(`LAP: ${Math.min(player.lap + 1, totalLaps)}/${totalLaps}`, 160, H - 30);
+  ctx.fillText(`LAP: ${Math.min(player.lap + 1, trackState.laps)}/${trackState.laps}`, 160, H - 30);
 
   // Speed bar
   ctx.fillStyle = '#333';
-  ctx.fillRect(280, H - 38, 100, 14);
+  ctx.fillRect(280, H - 38, 80, 14);
   const speedPct = Math.abs(player.speed) / player.maxSpeed;
   ctx.fillStyle = player.nitroActive ? '#00aaff' : '#ff6600';
-  ctx.fillRect(280, H - 38, 100 * speedPct, 14);
+  ctx.fillRect(280, H - 38, 80 * speedPct, 14);
   ctx.fillStyle = '#fff';
   ctx.font = '10px monospace';
-  ctx.fillText('SPEED', 310, H - 28);
+  ctx.fillText('SPEED', 300, H - 28);
 
   // Ammo
   ctx.fillStyle = '#ff6600';
   ctx.font = 'bold 14px monospace';
-  ctx.fillText(`AMMO: ${player.ammo}`, 410, H - 30);
+  ctx.fillText(`AMMO:${player.ammo}`, 380, H - 30);
 
   // Missiles
-  ctx.fillText(`MISSILES: ${player.missiles}`, 520, H - 30);
+  ctx.fillStyle = '#ff3333';
+  ctx.fillText(`MSL:${player.missiles}`, 470, H - 30);
 
-  // Health
+  // Health bar
   ctx.fillStyle = '#333';
-  ctx.fillRect(670, H - 38, 80, 14);
+  ctx.fillRect(550, H - 38, 80, 14);
   ctx.fillStyle = player.health > 50 ? '#00aa00' : (player.health > 25 ? '#aaaa00' : '#aa0000');
-  ctx.fillRect(670, H - 38, 80 * (player.health / 100), 14);
+  ctx.fillRect(550, H - 38, 80 * (player.health / 100), 14);
   ctx.fillStyle = '#fff';
   ctx.font = '10px monospace';
-  ctx.fillText('HEALTH', 690, H - 28);
+  ctx.fillText('HEALTH', 568, H - 28);
 
   // Nitro
-  ctx.fillStyle = '#ff6600';
+  ctx.fillStyle = '#00aaff';
   ctx.font = 'bold 14px monospace';
-  ctx.fillText(`NITRO: ${player.nitro}`, 780, H - 30);
+  ctx.fillText(`NIT:${player.nitro}`, 650, H - 30);
 
   // Wrenches
   ctx.fillStyle = '#ccc';
-  ctx.fillText(`WRENCHES: ${player.wrenches}`, 20, H - 10);
+  ctx.fillText(`WRENCHES:${player.wrenches}`, 720, H - 30);
 
   // Race time
   const secs = Math.floor(raceTime / 60);
   const mins = Math.floor(secs / 60);
   const displaySecs = secs % 60;
   ctx.fillStyle = '#ff6600';
-  ctx.fillText(`TIME: ${mins}:${displaySecs.toString().padStart(2, '0')}`, 780, H - 10);
+  ctx.fillText(`${mins}:${displaySecs.toString().padStart(2, '0')}`, 860, H - 30);
 
-  // Mini position indicators on left
+  // Zone indicator
+  const currentZone = getZoneAt(player.x, player.y);
+  if (currentZone && currentZone !== 'track') {
+    let zoneText = '';
+    let zoneColor = '#fff';
+    switch (currentZone) {
+      case 'boost': zoneText = 'BOOST!'; zoneColor = '#00aaff'; break;
+      case 'hazard': zoneText = 'HAZARD!'; zoneColor = '#ffaa00'; break;
+      case 'pit': zoneText = 'PIT STOP'; zoneColor = '#aa55ff'; break;
+      case 'wall': zoneText = 'WALL'; zoneColor = '#ff3333'; break;
+    }
+    if (zoneText) {
+      ctx.fillStyle = zoneColor;
+      ctx.font = 'bold 16px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(zoneText, W / 2, H - 60);
+      ctx.textAlign = 'left';
+    }
+  }
+
+  // Top position bar
   ctx.fillStyle = '#222';
   ctx.fillRect(0, 0, W, 24);
   for (let i = 0; i < sorted.length; i++) {
     const c = sorted[i];
     ctx.fillStyle = c.color;
     ctx.font = 'bold 12px monospace';
-    ctx.fillText(`${i + 1}. ${c.name}  LAP ${Math.min(c.lap + 1, totalLaps)}`, 20 + i * 230, 16);
+    ctx.fillText(`${i + 1}. ${c.name}  LAP ${Math.min(c.lap + 1, trackState.laps)}`, 20 + i * 230, 16);
   }
 }
 
-// --- Menu Screen ---
+// ========================================
+// MENU SCREEN
+// ========================================
+
 function drawMenu() {
   ctx.fillStyle = '#0a0a08';
   ctx.fillRect(0, 0, W, H);
@@ -1004,32 +1579,51 @@ function drawMenu() {
   ctx.fillStyle = '#ff6600';
   ctx.font = 'bold 56px monospace';
   ctx.textAlign = 'center';
-  ctx.fillText('WASTELAND', W / 2, 200);
+  ctx.fillText('WASTELAND', W / 2, 160);
   ctx.fillStyle = '#cc4400';
   ctx.font = 'bold 72px monospace';
-  ctx.fillText('RACERS', W / 2, 270);
+  ctx.fillText('RACERS', W / 2, 230);
 
   // Subtitle
   ctx.fillStyle = '#886644';
   ctx.font = '16px monospace';
-  ctx.fillText('POST-APOCALYPTIC COMBAT RACING', W / 2, 310);
+  ctx.fillText('POST-APOCALYPTIC COMBAT RACING', W / 2, 270);
+
+  // Track name
+  ctx.fillStyle = '#aa8866';
+  ctx.font = 'bold 18px monospace';
+  ctx.fillText(`TRACK: ${trackState.name}`, W / 2, 330);
 
   // Controls
   ctx.fillStyle = '#aa8866';
   ctx.font = '14px monospace';
-  ctx.fillText('ARROW KEYS or WASD - STEER & ACCELERATE', W / 2, 400);
-  ctx.fillText('SPACE - SHOOT', W / 2, 425);
-  ctx.fillText('N - NITRO BOOST', W / 2, 450);
+  ctx.fillText('ARROW KEYS or WASD - STEER & ACCELERATE', W / 2, 390);
+  ctx.fillText('SPACE - SHOOT CANNON', W / 2, 415);
+  ctx.fillText('M - FIRE MISSILE', W / 2, 440);
+  ctx.fillText('N - NITRO BOOST', W / 2, 465);
 
   // Start prompt
   ctx.fillStyle = Math.floor(Date.now() / 500) % 2 === 0 ? '#ff6600' : '#cc4400';
   ctx.font = 'bold 24px monospace';
-  ctx.fillText('PRESS ENTER TO RACE', W / 2, 540);
+  ctx.fillText('PRESS ENTER TO RACE', W / 2, 530);
+
+  // Load track prompt
+  ctx.fillStyle = '#668844';
+  ctx.font = '16px monospace';
+  ctx.fillText('PRESS L TO LOAD CUSTOM TRACK', W / 2, 580);
+
+  // Version info
+  ctx.fillStyle = '#444';
+  ctx.font = '11px monospace';
+  ctx.fillText('v2.0 - Zone System + Track Loading + Missiles', W / 2, 660);
 
   ctx.textAlign = 'left';
 }
 
-// --- Countdown ---
+// ========================================
+// COUNTDOWN
+// ========================================
+
 function drawCountdown() {
   const count = Math.ceil(countdownTimer / 60);
   ctx.fillStyle = 'rgba(0,0,0,0.5)';
@@ -1041,7 +1635,10 @@ function drawCountdown() {
   ctx.textAlign = 'left';
 }
 
-// --- Results Screen ---
+// ========================================
+// RESULTS SCREEN
+// ========================================
+
 function drawResults(cars) {
   ctx.fillStyle = 'rgba(0,0,0,0.8)';
   ctx.fillRect(0, 0, W, H);
@@ -1068,6 +1665,14 @@ function drawResults(cars) {
     ctx.fillText(`${i + 1}. ${c.name}  ${timeStr}`, W / 2, 200 + i * 50);
   }
 
+  // Award wrenches based on finishing position
+  const playerIdx = sorted.indexOf(player);
+  const wrenchAward = [3, 2, 1, 0][playerIdx] || 0;
+
+  ctx.fillStyle = '#ccc';
+  ctx.font = '18px monospace';
+  ctx.fillText(`+${wrenchAward} WRENCHES EARNED`, W / 2, 430);
+
   ctx.fillStyle = '#886644';
   ctx.font = '18px monospace';
   ctx.fillText('PRESS ENTER TO CONTINUE TO SHOP', W / 2, 500);
@@ -1076,7 +1681,10 @@ function drawResults(cars) {
   ctx.textAlign = 'left';
 }
 
-// --- Shop Screen ---
+// ========================================
+// SHOP SCREEN
+// ========================================
+
 function drawShop(player) {
   ctx.fillStyle = 'rgba(10,10,8,0.95)';
   ctx.fillRect(0, 0, W, H);
@@ -1113,7 +1721,6 @@ function drawShop(player) {
     ctx.font = '14px monospace';
     ctx.fillText(`Cost: ${u.cost} wrench${u.cost > 1 ? 'es' : ''}`, 500, y);
 
-    // Level bar
     if (u.max <= 5) {
       for (let j = 0; j < u.max; j++) {
         ctx.fillStyle = j < u.current ? '#ff6600' : '#333';
@@ -1129,42 +1736,66 @@ function drawShop(player) {
   ctx.textAlign = 'left';
 }
 
-// --- Initialize Game ---
+// ========================================
+// INITIALIZE GAME
+// ========================================
+
 const player = new Car('#cc3300', 'PLAYER', true);
 const ai1 = new Car('#3366cc', 'VIPER', false);
 const ai2 = new Car('#33aa33', 'SKULL', false);
 const ai3 = new Car('#aa33aa', 'GRIM', false);
 const cars = [player, ai1, ai2, ai3];
 
+// Generate default track on startup
+generateDefaultTrack();
+
+let resultsWrenchesAwarded = false;
+
 function resetRace() {
-  const spacing = Math.floor(smoothTrack.length / cars.length / 3);
   for (let i = 0; i < cars.length; i++) {
-    const offset = i * spacing;
-    const n = trackNormals[offset];
-    cars[i].reset(offset);
-    // Stagger positions side by side
-    cars[i].x += n.x * (i % 2 === 0 ? 15 : -15);
-    cars[i].y += n.y * (i % 2 === 0 ? 15 : -15);
+    cars[i].reset(i);
   }
   bullets = [];
   explosions = [];
   raceTime = 0;
+  resultsWrenchesAwarded = false;
   generateObstacles();
 }
 
-// --- Input ---
+// ========================================
+// INPUT HANDLING
+// ========================================
+
 const keys = {};
 document.addEventListener('keydown', e => {
   keys[e.key] = true;
 
-  if (gameState === STATE.MENU && e.key === 'Enter') {
-    gameState = STATE.COUNTDOWN;
-    countdownTimer = 240; // 4 seconds
-    resetRace();
+  if (gameState === STATE.MENU) {
+    if (e.key === 'Enter') {
+      gameState = STATE.COUNTDOWN;
+      countdownTimer = 240;
+      resetRace();
+    }
+    if (e.key === 'l' || e.key === 'L') {
+      document.getElementById('track-file-input').click();
+    }
   }
 
   if (gameState === STATE.RESULTS) {
     if (e.key === 'Enter') {
+      // Award wrenches before going to shop
+      if (!resultsWrenchesAwarded) {
+        const sorted = [...cars].sort((a, b) => {
+          if (a.finished && b.finished) return a.finishTime - b.finishTime;
+          if (a.finished) return -1;
+          if (b.finished) return 1;
+          return b.totalProgress - a.totalProgress;
+        });
+        const playerIdx = sorted.indexOf(player);
+        const wrenchAward = [3, 2, 1, 0][playerIdx] || 0;
+        player.wrenches += wrenchAward;
+        resultsWrenchesAwarded = true;
+      }
       gameState = STATE.SHOP;
     } else if (e.key === 'r' || e.key === 'R') {
       gameState = STATE.COUNTDOWN;
@@ -1207,7 +1838,10 @@ document.addEventListener('keydown', e => {
 });
 document.addEventListener('keyup', e => { keys[e.key] = false; });
 
-// --- Main Loop ---
+// ========================================
+// MAIN GAME LOOP
+// ========================================
+
 function gameLoop() {
   ctx.clearRect(0, 0, W, H);
 
@@ -1240,7 +1874,6 @@ function gameLoop() {
       // Check race end
       const allFinishedOrTimeout = cars.every(c => c.finished) || raceTime > 60 * 60 * 5;
       if (player.finished || allFinishedOrTimeout) {
-        // Small delay before results
         if (!player._resultDelay) player._resultDelay = 120;
         player._resultDelay--;
         if (player._resultDelay <= 0) {
