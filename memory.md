@@ -56,10 +56,25 @@
 - Upgrade levels: speed, accel, tires (max 5 each)
 - Consumables: ammo, nitro, missiles (no max)
 
+## Deployment (Session 5)
+
+### GitHub Pages
+- `index.html` serves as the landing page (post-apocalyptic themed)
+- Links to `wasteland-racers.html` (game) and `zone-editor.html` (editor)
+- Game is fully self-contained, no build step, no CDN dependencies
+- Enable GitHub Pages in repo Settings > Pages > Deploy from branch (main)
+- Game URL: `https://<username>.github.io/Wasteland-Racers/`
+
+### Responsive Design
+- Canvas CSS: `max-width: 100vw; max-height: 100vh` scales to fit viewport
+- Browser key defaults prevented (no scrolling when pressing arrows/space)
+- Game internal resolution stays 900x700 (CSS scales the canvas element)
+
 ## File Structure
 ```
 wasteland-racers/
-  wasteland-racers.html    # Main game (v2 - zone system)
+  index.html               # Landing page for GitHub Pages
+  wasteland-racers.html    # Main game (v3.1)
   zone-editor.html         # Track editor
   agents.md                # Instructions for AI tools
   memory.md                # This file
