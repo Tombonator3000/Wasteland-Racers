@@ -46,6 +46,14 @@
 - [x] Save/load progress (localStorage)
 - [x] New record detection and display
 - [x] Track unlock notification
+## Phase 3.5 - GitHub Pages Deployment [DONE]
+- [x] Create index.html landing page for GitHub Pages
+- [x] Add responsive canvas scaling (fits any screen)
+- [x] Prevent browser key defaults (no scrolling during play)
+- [x] Update version to v3.1
+- [x] Update all documentation (log.md, todo.md, memory.md)
+
+## Phase 3 - Remaining Polish
 - [ ] Barricade obstacles (destructible)
 - [ ] More mine/pickup variety
 - [ ] Improved AI: avoid hazards, use boost zones

@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WASTELAND RACERS - Post-Apocalyptic Combat Racing</title>
+<meta name="description" content="Wasteland Racers: A browser-based top-down arcade combat racing game inspired by Badlands (1990) and Super Off Road. Race, shoot, upgrade, survive.">
+<meta name="theme-color" content="#0a0a0a">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0a0a0a;
+    color: #aa8866;
+    font-family: 'Courier New', monospace;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    overflow-x: hidden;
+  }
+
+  .bg-lines {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    pointer-events: none;
+    z-index: 0;
+    opacity: 0.04;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 24px,
+      #ff6600 24px,
+      #ff6600 25px
+    );
+  }
+
+  .container {
+    position: relative;
+    z-index: 1;
+    max-width: 900px;
+    width: 100%;
+    padding: 40px 20px;
+    text-align: center;
+  }
+
+  .title {
+    margin-bottom: 8px;
+  }
+  .title h1 {
+    font-size: clamp(36px, 8vw, 72px);
+    color: #ff6600;
+    text-shadow: 0 0 20px rgba(255,100,0,0.5), 0 0 40px rgba(255,100,0,0.2);
+    line-height: 1.1;
+    letter-spacing: 4px;
+  }
+  .title .sub {
+    font-size: clamp(10px, 2vw, 14px);
+    color: #886644;
+    letter-spacing: 6px;
+    margin-top: 8px;
+  }
+
+  .divider {
+    width: 400px;
+    max-width: 80%;
+    height: 2px;
+    background: linear-gradient(to right, transparent, #ff6600, transparent);
+    margin: 24px auto;
+  }
+  .divider.thin {
+    height: 1px;
+    background: linear-gradient(to right, transparent, #663300, transparent);
+    margin: 12px auto;
+  }
+
+  .play-btn {
+    display: inline-block;
+    margin: 30px 0 16px;
+    padding: 20px 60px;
+    background: rgba(255,102,0,0.15);
+    border: 2px solid #ff6600;
+    color: #ff6600;
+    font-family: 'Courier New', monospace;
+    font-size: clamp(20px, 4vw, 32px);
+    font-weight: bold;
+    text-decoration: none;
+    letter-spacing: 4px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .play-btn:hover {
+    background: rgba(255,102,0,0.3);
+    text-shadow: 0 0 12px rgba(255,100,0,0.8);
+    box-shadow: 0 0 20px rgba(255,100,0,0.3);
+  }
+
+  .editor-btn {
+    display: inline-block;
+    margin: 8px 0 30px;
+    padding: 10px 30px;
+    background: rgba(100,80,50,0.1);
+    border: 1px solid #554433;
+    color: #886644;
+    font-family: 'Courier New', monospace;
+    font-size: 14px;
+    text-decoration: none;
+    letter-spacing: 2px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .editor-btn:hover {
+    background: rgba(100,80,50,0.2);
+    border-color: #886644;
+    color: #aa8866;
+  }
+
+  .features {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+    margin: 20px 0;
+    text-align: left;
+  }
+  .feature {
+    padding: 16px;
+    background: rgba(30,30,25,0.6);
+    border: 1px solid #332211;
+  }
+  .feature h3 {
+    color: #ff6600;
+    font-size: 13px;
+    margin-bottom: 6px;
+    letter-spacing: 2px;
+  }
+  .feature p {
+    color: #776655;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .controls {
+    margin: 20px 0;
+    padding: 20px;
+    background: rgba(20,20,15,0.8);
+    border: 1px solid #332211;
+    text-align: left;
+  }
+  .controls h2 {
+    color: #ff6600;
+    font-size: 16px;
+    margin-bottom: 12px;
+    letter-spacing: 3px;
+    text-align: center;
+  }
+  .controls-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    font-size: 12px;
+  }
+  .controls-grid .key {
+    color: #ff9933;
+    font-weight: bold;
+  }
+  .controls-grid .action {
+    color: #776655;
+  }
+
+  .screenshot {
+    margin: 20px 0;
+    padding: 4px;
+    border: 1px solid #332211;
+    background: #111;
+    max-width: 100%;
+  }
+
+  .footer {
+    margin-top: 30px;
+    padding: 16px;
+    color: #443322;
+    font-size: 11px;
+    border-top: 1px solid #1a1a15;
+  }
+  .footer a {
+    color: #665544;
+    text-decoration: none;
+  }
+  .footer a:hover {
+    color: #886644;
+  }
+
+  @media (max-width: 600px) {
+    .controls-grid {
+      grid-template-columns: 1fr;
+    }
+    .features {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+</head>
+<body>
+
+<div class="bg-lines"></div>
+
+<div class="container">
+  <div class="title">
+    <h1>WASTELAND<br>RACERS</h1>
+    <div class="sub">POST-APOCALYPTIC COMBAT RACING</div>
+  </div>
+
+  <div class="divider"></div>
+
+  <a href="wasteland-racers.html" class="play-btn">PLAY NOW</a>
+  <br>
+  <a href="zone-editor.html" class="editor-btn">TRACK EDITOR</a>
+
+  <div class="divider thin"></div>
+
+  <div class="features">
+    <div class="feature">
+      <h3>COMBAT RACING</h3>
+      <p>Race against 3 AI opponents with cannons, homing missiles, and nitro boosts. Destroy or be destroyed.</p>
+    </div>
+    <div class="feature">
+      <h3>5 TRACKS</h3>
+      <p>From the Wasteland Circuit to the deadly Thunderdome. Unlock tracks by finishing races.</p>
+    </div>
+    <div class="feature">
+      <h3>UPGRADE SHOP</h3>
+      <p>Earn money from races. Upgrade speed, acceleration, tires, and stock up on ammo and missiles.</p>
+    </div>
+    <div class="feature">
+      <h3>TRACK EDITOR</h3>
+      <p>Create custom tracks with the built-in zone editor. Import background images, paint zones, set waypoints.</p>
+    </div>
+  </div>
+
+  <div class="controls">
+    <h2>CONTROLS</h2>
+    <div class="controls-grid">
+      <div><span class="key">WASD / Arrows</span> <span class="action">- Steer &amp; Accelerate</span></div>
+      <div><span class="key">SPACE</span> <span class="action">- Fire Cannon</span></div>
+      <div><span class="key">M</span> <span class="action">- Launch Missile</span></div>
+      <div><span class="key">N</span> <span class="action">- Nitro Boost</span></div>
+      <div><span class="key">ENTER</span> <span class="action">- Confirm / Start Race</span></div>
+      <div><span class="key">ESC</span> <span class="action">- Back / Menu</span></div>
+      <div><span class="key">L</span> <span class="action">- Load Custom Track</span></div>
+      <div><span class="key">1-6</span> <span class="action">- Buy Upgrades (Shop)</span></div>
+    </div>
+  </div>
+
+  <div class="divider thin"></div>
+
+  <div class="footer">
+    <p>Inspired by Badlands (1990) &amp; Super Off Road (1989)</p>
+    <p>Built with HTML5 Canvas &amp; vanilla JavaScript. No dependencies.</p>
+    <p style="margin-top: 8px;">
+      <a href="https://github.com/Tombonator3000/Wasteland-Racers">GitHub Repository</a>
+    </p>
+  </div>
+</div>
+
+</body>
+</html>

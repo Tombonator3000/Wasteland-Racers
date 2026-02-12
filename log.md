@@ -206,3 +206,36 @@
 ### 17:55 - Updated documentation
 - Updated log.md with all session 4 changes
 - Updated todo.md with completed Phase 3 items
+
+## 2026-02-12 - Session 5: GitHub Pages Deployment (v3.1)
+
+### 18:00 - Making the game playable from GitHub
+- Goal: Make the game accessible via GitHub Pages so anyone can play it from a URL
+- Reviewed all project files and full game source code (2684 lines)
+- Game is fully functional: menu, 5 tracks, progression, shop, highscores, combat, AI
+
+### 18:10 - Created index.html landing page
+- Built a post-apocalyptic themed landing page for GitHub Pages
+- Features:
+  - Responsive design (works on desktop and mobile viewports)
+  - "PLAY NOW" button linking to wasteland-racers.html
+  - "TRACK EDITOR" button linking to zone-editor.html
+  - Feature grid: Combat Racing, 5 Tracks, Upgrade Shop, Track Editor
+  - Full controls reference section
+  - Consistent dark/orange theme matching the game
+  - Meta tags for SEO (description, theme-color)
+  - GitHub repository link in footer
+
+### 18:15 - Game improvements for web deployment
+- Added responsive canvas CSS (max-width/max-height 100vw/100vh) so game fits any screen
+- Added keyboard event.preventDefault() for game keys (arrows, space, enter, escape)
+  - Prevents browser from scrolling when playing
+  - Fixes common issue where space bar scrolls the page
+- Updated version to v3.1
+- Game already had proper viewport meta tag
+
+### 18:20 - Updated project documentation
+- Updated log.md with session 5 changes
+- Updated todo.md with GitHub Pages deployment tasks
+- Updated memory.md with deployment decisions
+- Committed and pushed to branch claude/game-playable-github-S2sBm
