@@ -18,31 +18,41 @@
 - [x] Explosion effects
 - [x] Menu, countdown, results screens
 
-## Phase 2 - Game Loop
-- [ ] Race start countdown
-- [ ] Race finish / results screen
-- [ ] Upgrade shop between races
+## Phase 2 - Game Loop & Track System [DONE]
 - [x] Zone editor for custom tracks
-- [x] Background image import
+- [x] Background image import in editor
 - [x] AI waypoint system in editor
-- [ ] Load track JSON in game engine
-- [ ] Multiple tracks
-- [ ] Mines and barricades
-- [ ] Missile upgrades
-- [ ] Wrench pickups
+- [x] Load track JSON in game engine
+- [x] Grid-based collision (O(1) zone lookup)
+- [x] Zone effects (wall bounce, hazard, boost, pit)
+- [x] Finish line lap counting (line intersection)
+- [x] Background image rendering in game
+- [x] Track loading UI (press L on menu)
+- [x] Default built-in track (generated from spline)
+- [x] Missile system (homing projectiles)
+- [x] Wrench rewards based on race position
+- [x] AI personality system (aggression, accuracy, nitro freq)
+- [x] Sample track (desert-oval.json)
 
-## Phase 3 - Track Editor
-- [ ] Block-based track editor
-- [ ] Save/load tracks
-- [ ] Share tracks
+## Phase 3 - Multiple Tracks & Polish
+- [ ] Multiple built-in tracks (selectable from menu)
+- [ ] Track selection screen
+- [ ] Barricade obstacles (destructible)
+- [ ] More mine/pickup variety
+- [ ] Improved AI: avoid hazards, use boost zones
+- [ ] Sound effects (engine, shooting, explosions)
+- [ ] Music (looping track)
+- [ ] Better car sprites/graphics
+- [ ] Smoke particles when damaged
 
 ## Phase 4 - Multiplayer
-- [ ] Local multiplayer (split keyboard)
+- [ ] Local multiplayer (split keyboard: WASD + Arrows)
+- [ ] Split-screen or shared view
 - [ ] Online multiplayer (stretch goal)
 
-## Phase 5 - Polish
-- [ ] Sound effects
-- [ ] Music
-- [ ] Particle effects (explosions, dust)
-- [ ] More car customization
-- [ ] Leaderboards
+## Phase 5 - Polish & Extra
+- [ ] More car customization (color picker)
+- [ ] Leaderboards (local storage)
+- [ ] Tournament mode (race series)
+- [ ] Weather effects (rain, dust storms)
+- [ ] Day/night cycle

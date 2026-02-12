@@ -24,3 +24,49 @@
 ## Game Mechanics (from source games)
 - Badlands: 3 cars, 3-lap races, wrenches for upgrades, cannons, missiles, mines, barricades
 - Super Off Road: up to 4 players, nitro boosts, money/points for upgrades, 8+ tracks
+
+## Architecture Decisions (Session 3)
+
+### Track System
+- Unified `trackState` object holds all track data (grid, waypoints, startPositions, finishLine, bgImage)
+- Default track generated from cardinal spline, converted to 60x46 grid
+- Custom tracks loaded from JSON files via file input (press L on menu)
+- Grid-based collision: O(1) zone lookup via `getZoneAt(x, y)`
+- Two rendering paths: default (opaque zones + environment) and custom (background image + transparent overlay)
+
+### Collision & Physics
+- Replaced spline-based `closestTrackPoint()` with grid cell lookup
+- Zone effects applied per frame: wall=bounce, hazard=slow+damage, boost=speed, pit=heal
+- Finish line detection: line-segment intersection with cross-product direction check
+- Bullets collide with wall zones (explode on impact)
+
+### AI System
+- AI follows waypoints from trackState (either generated or from JSON)
+- Look-ahead blending: current waypoint + 2 ahead for smoother paths
+- Personality system: each AI has randomized aggression, accuracy, nitroFreq
+
+### Combat
+- Cannons: 15 damage, 15 stun, SPACE key, 12 frame cooldown
+- Missiles: 35 damage, 30 stun, M key, homing (0.06 rad/frame turn), 60 frame cooldown
+- Missiles target nearest opponent within 400px, slight acceleration (1.005x)
+- Purchasable in shop: ammo=1 wrench, nitro=2 wrenches, missile=3 wrenches
+
+### Progression
+- Wrenches awarded by finishing position: 1st=3, 2nd=2, 3rd=1, 4th=0
+- Upgrade levels: speed, accel, tires (max 5 each)
+- Consumables: ammo, nitro, missiles (no max)
+
+## File Structure
+```
+wasteland-racers/
+  wasteland-racers.html    # Main game (v2 - zone system)
+  zone-editor.html         # Track editor
+  agents.md                # Instructions for AI tools
+  memory.md                # This file
+  todo.md                  # Task tracking
+  log.md                   # Development log
+  master-prompt.md         # Portable system prompt
+  tracks/                  # Exported track JSON files
+    desert-oval.json       # Sample oval track
+  assets/                  # Background images, sprites (future)
+```

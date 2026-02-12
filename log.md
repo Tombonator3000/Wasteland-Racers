@@ -69,3 +69,59 @@
 - Built agents.md with full project documentation
 - Built master-prompt.md with portable system prompt for Claude Code / Lovable / Cursor
 - Includes: track JSON format spec, zone behavior, physics model, AI system, workflow
+
+## 2026-02-12 - Session 3: Game Engine v2 - Track Loading & Combat
+
+### 16:00 - Major game engine rewrite
+- Rewrote wasteland-racers.html to v2 with zone-based track system
+- Replaced spline-based collision with grid-based O(1) zone lookup
+- All game systems now read from a unified `trackState` object
+
+### 16:15 - Track JSON loading implemented
+- Game can now load track JSON files exported from the zone editor
+- Press L on menu screen to load a custom track file
+- Supports: grid data, waypoints, start positions, finish line, background images
+- Fallback: generates a default track from the original spline on startup
+- Background image rendering for custom tracks with semi-transparent zone overlay
+
+### 16:20 - Zone effects system
+- Wall: cars bounce back, speed reversal
+- Hazard: speed reduction (0.96x), random damage over time
+- Boost: speed increase to 1.4x max speed
+- Pit: gradual healing (+0.3/frame), slight speed reduction
+- Off-track (empty/0): heavy friction (0.94x)
+- Zone indicator in HUD shows current zone status
+
+### 16:25 - AI waypoint system overhaul
+- AI now follows waypoints from trackState (JSON or generated)
+- Look-ahead blending: blends current + 2-ahead waypoints for smooth steering
+- AI personality system: aggression, accuracy, nitroFreq randomized per car
+- AI uses missiles when available
+
+### 16:30 - Finish line lap counting
+- Replaced track-index-based lap counting with line-segment intersection
+- Uses cross product for direction detection (forward vs backward)
+- Works with any finish line angle from the zone editor
+
+### 16:35 - Missile system implemented
+- Homing missiles that track nearest opponent within 400px
+- Turn rate: 0.06 rad/frame, slight acceleration (1.005x)
+- Damage: 35 (vs 15 for bullets), longer stun (30 vs 15 frames)
+- Visual: red triangle with smoke trail particles
+- Player fires with M key, AI uses missiles based on aggression
+- Missile cooldown: 60 frames (separate from cannon cooldown)
+- Purchasable in shop: 3 wrenches per missile
+
+### 16:40 - Wrench reward system
+- Wrenches now awarded based on race position: 1st=3, 2nd=2, 3rd=1, 4th=0
+- Prevents double-awarding with resultsWrenchesAwarded flag
+
+### 16:45 - Sample track created
+- Created tracks/ directory
+- Generated desert-oval.json: simple oval track with boost, hazard, pit zones
+- 60x46 grid, 20 waypoints, 4 start positions
+
+### 16:50 - Updated project documentation
+- Updated log.md with all session 3 changes
+- Updated todo.md with completed Phase 2 items
+- Updated memory.md with new technical decisions
