@@ -34,9 +34,18 @@
 - [x] AI personality system (aggression, accuracy, nitro freq)
 - [x] Sample track (desert-oval.json)
 
-## Phase 3 - Multiple Tracks & Polish
-- [ ] Multiple built-in tracks (selectable from menu)
-- [ ] Track selection screen
+## Phase 3 - Menu, Progression & Highscores [DONE]
+- [x] Multiple built-in tracks (5 tracks with different layouts)
+- [x] Track selection screen with locked/unlocked display
+- [x] Start menu with navigation (START RACE / HIGHSCORES)
+- [x] Track progression system (complete track to unlock next)
+- [x] Money-based economy (earn from races, spend in shop)
+- [x] Enhanced shop screen (vehicle upgrades + supplies)
+- [x] Highscore system with localStorage persistence
+- [x] Hall of Fame screen (best times, positions per track)
+- [x] Save/load progress (localStorage)
+- [x] New record detection and display
+- [x] Track unlock notification
 - [ ] Barricade obstacles (destructible)
 - [ ] More mine/pickup variety
 - [ ] Improved AI: avoid hazards, use boost zones
@@ -52,7 +61,6 @@
 
 ## Phase 5 - Polish & Extra
 - [ ] More car customization (color picker)
-- [ ] Leaderboards (local storage)
 - [ ] Tournament mode (race series)
 - [ ] Weather effects (rain, dust storms)
 - [ ] Day/night cycle
