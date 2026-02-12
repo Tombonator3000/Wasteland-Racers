@@ -63,11 +63,145 @@ const STATE = {
   COUNTDOWN: 1,
   RACING: 2,
   RESULTS: 3,
-  SHOP: 4
+  SHOP: 4,
+  TRACK_SELECT: 5,
+  HIGHSCORES: 6
 };
 let gameState = STATE.MENU;
 let countdownTimer = 0;
 let raceTime = 0;
+let menuSelection = 0; // 0=Race, 1=Highscores
+
+// --- Progression System ---
+let progression = {
+  currentTrackIndex: 0,
+  unlockedTracks: 1,
+  totalWrenches: 0,
+  money: 0,
+  highscores: {} // trackName: { bestTime, bestPosition, bestLap }
+};
+
+function saveProgress() {
+  try {
+    const data = {
+      unlockedTracks: progression.unlockedTracks,
+      totalWrenches: progression.totalWrenches,
+      money: progression.money,
+      highscores: progression.highscores,
+      playerUpgrades: {
+        speed: player ? player.speedUpgrade : 0,
+        accel: player ? player.accelUpgrade : 0,
+        tires: player ? player.tireUpgrade : 0,
+        wrenches: player ? player.wrenches : 0
+      }
+    };
+    localStorage.setItem('wasteland-racers-save', JSON.stringify(data));
+  } catch (e) { /* localStorage not available */ }
+}
+
+function loadProgress() {
+  try {
+    const raw = localStorage.getItem('wasteland-racers-save');
+    if (!raw) return;
+    const data = JSON.parse(raw);
+    progression.unlockedTracks = data.unlockedTracks || 1;
+    progression.totalWrenches = data.totalWrenches || 0;
+    progression.money = data.money || 0;
+    progression.highscores = data.highscores || {};
+    if (data.playerUpgrades) {
+      pendingUpgrades = data.playerUpgrades;
+    }
+  } catch (e) { /* localStorage not available */ }
+}
+
+let pendingUpgrades = null; // loaded from save, applied after player is created
+
+// --- Track Definitions ---
+// Each track is defined by its spline points, name, laps, and special zones
+const TRACK_DEFS = [
+  {
+    name: 'Wasteland Circuit',
+    difficulty: 'EASY',
+    laps: 3,
+    description: 'A classic oval through the wasteland',
+    reward: [4, 3, 2, 1],
+    points: [
+      {x: 200, y: 120}, {x: 380, y: 80}, {x: 580, y: 80}, {x: 720, y: 120},
+      {x: 790, y: 200}, {x: 810, y: 320}, {x: 780, y: 440}, {x: 700, y: 520},
+      {x: 580, y: 560}, {x: 460, y: 580}, {x: 340, y: 600}, {x: 200, y: 580},
+      {x: 120, y: 500}, {x: 100, y: 400}, {x: 130, y: 300}, {x: 160, y: 220},
+      {x: 140, y: 160}
+    ],
+    hazardAt: 0.4, boostAt: 0.15, pitAt: 0.7
+  },
+  {
+    name: 'Scorched Serpent',
+    difficulty: 'MEDIUM',
+    laps: 3,
+    description: 'Winding S-curves through burning sands',
+    reward: [5, 4, 3, 1],
+    points: [
+      {x: 150, y: 100}, {x: 300, y: 80}, {x: 450, y: 140}, {x: 600, y: 200},
+      {x: 750, y: 160}, {x: 820, y: 250}, {x: 780, y: 350}, {x: 650, y: 380},
+      {x: 500, y: 340}, {x: 350, y: 400}, {x: 200, y: 450}, {x: 120, y: 520},
+      {x: 200, y: 600}, {x: 380, y: 620}, {x: 550, y: 580}, {x: 700, y: 540},
+      {x: 800, y: 500}, {x: 780, y: 600}, {x: 650, y: 640}, {x: 450, y: 640},
+      {x: 280, y: 580}, {x: 130, y: 450}, {x: 80, y: 320}, {x: 100, y: 200}
+    ],
+    hazardAt: 0.25, boostAt: 0.5, pitAt: 0.75
+  },
+  {
+    name: 'Rust Ring',
+    difficulty: 'MEDIUM',
+    laps: 4,
+    description: 'A rusted oval with a deadly chicane',
+    reward: [6, 4, 3, 1],
+    points: [
+      {x: 150, y: 150}, {x: 350, y: 90}, {x: 550, y: 90}, {x: 700, y: 130},
+      {x: 800, y: 230}, {x: 790, y: 350}, {x: 720, y: 420},
+      {x: 600, y: 380}, {x: 520, y: 340}, {x: 480, y: 400}, {x: 420, y: 450},
+      {x: 340, y: 420}, {x: 280, y: 460},
+      {x: 200, y: 540}, {x: 140, y: 600}, {x: 100, y: 500},
+      {x: 80, y: 380}, {x: 90, y: 260}
+    ],
+    hazardAt: 0.35, boostAt: 0.1, pitAt: 0.6
+  },
+  {
+    name: 'Toxic Speedway',
+    difficulty: 'HARD',
+    laps: 3,
+    description: 'Hazard-filled track through toxic waste',
+    reward: [8, 5, 3, 1],
+    points: [
+      {x: 200, y: 100}, {x: 450, y: 80}, {x: 700, y: 100}, {x: 800, y: 200},
+      {x: 780, y: 320}, {x: 700, y: 380}, {x: 580, y: 350}, {x: 480, y: 280},
+      {x: 400, y: 320}, {x: 320, y: 400}, {x: 250, y: 480}, {x: 300, y: 560},
+      {x: 430, y: 600}, {x: 580, y: 580}, {x: 700, y: 520}, {x: 780, y: 580},
+      {x: 730, y: 640}, {x: 550, y: 650}, {x: 350, y: 640}, {x: 180, y: 600},
+      {x: 100, y: 500}, {x: 80, y: 360}, {x: 100, y: 230}
+    ],
+    hazardAt: 0.2, boostAt: 0.45, pitAt: 0.8,
+    extraHazards: [0.55, 0.7]
+  },
+  {
+    name: 'Thunderdome',
+    difficulty: 'EXTREME',
+    laps: 4,
+    description: 'The ultimate challenge - survive if you can',
+    reward: [10, 7, 4, 2],
+    points: [
+      {x: 150, y: 120}, {x: 300, y: 70}, {x: 500, y: 70}, {x: 650, y: 100},
+      {x: 780, y: 170}, {x: 830, y: 280}, {x: 800, y: 380}, {x: 700, y: 420},
+      {x: 600, y: 350}, {x: 500, y: 300}, {x: 400, y: 350}, {x: 350, y: 430},
+      {x: 400, y: 520}, {x: 520, y: 560}, {x: 650, y: 530}, {x: 750, y: 560},
+      {x: 800, y: 620}, {x: 700, y: 660}, {x: 540, y: 650}, {x: 380, y: 630},
+      {x: 250, y: 580}, {x: 150, y: 500}, {x: 100, y: 400}, {x: 90, y: 280},
+      {x: 100, y: 190}
+    ],
+    hazardAt: 0.15, boostAt: 0.4, pitAt: 0.65,
+    extraHazards: [0.3, 0.55, 0.85]
+  }
+];
 
 // --- Track State ---
 // All track data lives here - populated by default or from JSON
@@ -94,26 +228,7 @@ const trackBorderColor = '#2a1a0a';
 const groundColor = '#1a1a12';
 const trackWidth = 70;
 
-// Spline waypoints for the default built-in track
-const defaultTrackPoints = [
-  {x: 200, y: 120},
-  {x: 380, y: 80},
-  {x: 580, y: 80},
-  {x: 720, y: 120},
-  {x: 790, y: 200},
-  {x: 810, y: 320},
-  {x: 780, y: 440},
-  {x: 700, y: 520},
-  {x: 580, y: 560},
-  {x: 460, y: 580},
-  {x: 340, y: 600},
-  {x: 200, y: 580},
-  {x: 120, y: 500},
-  {x: 100, y: 400},
-  {x: 130, y: 300},
-  {x: 160, y: 220},
-  {x: 140, y: 160},
-];
+// Default track points now stored in TRACK_DEFS[0]
 
 function getSplinePoints(pts, tension, numPerSeg) {
   tension = tension || 0.5;
@@ -155,9 +270,10 @@ function getTrackNormals(pts) {
   return normals;
 }
 
-// Generate default track from spline, converting to grid format
-function generateDefaultTrack() {
-  const smoothTrack = getSplinePoints(defaultTrackPoints, 0.5, 25);
+// Generate track from a track definition index
+function generateTrackFromDef(defIndex) {
+  const def = TRACK_DEFS[defIndex] || TRACK_DEFS[0];
+  const smoothTrack = getSplinePoints(def.points, 0.5, 25);
   const normals = getTrackNormals(smoothTrack);
   const cols = 60;
   const rows = 46;
@@ -188,49 +304,32 @@ function generateDefaultTrack() {
     }
   }
 
-  // Add some hazard and boost zones for variety
-  // Hazard zone near middle of track
-  const hazardIdx = Math.floor(smoothTrack.length * 0.4);
-  const hazPt = smoothTrack[hazardIdx];
-  const hCol = Math.floor(hazPt.x / cw);
-  const hRow = Math.floor(hazPt.y / ch);
-  for (let dr = -1; dr <= 1; dr++) {
-    for (let dc = -1; dc <= 1; dc++) {
-      const rr = hRow + dr;
-      const cc = hCol + dc;
-      if (rr >= 0 && rr < rows && cc >= 0 && cc < cols && data[rr][cc] === 'track') {
-        data[rr][cc] = 'hazard';
+  // Place hazard zone
+  function placeZone(fraction, type, radius) {
+    const idx = Math.floor(smoothTrack.length * fraction);
+    const pt = smoothTrack[idx];
+    const col = Math.floor(pt.x / cw);
+    const row = Math.floor(pt.y / ch);
+    const r = radius || 1;
+    for (let dr = -r; dr <= r; dr++) {
+      for (let dc = -r; dc <= r; dc++) {
+        const rr = row + dr;
+        const cc = col + dc;
+        if (rr >= 0 && rr < rows && cc >= 0 && cc < cols && data[rr][cc] === 'track') {
+          data[rr][cc] = type;
+        }
       }
     }
   }
 
-  // Boost zone on a straight section
-  const boostIdx = Math.floor(smoothTrack.length * 0.15);
-  const boostPt = smoothTrack[boostIdx];
-  const bCol = Math.floor(boostPt.x / cw);
-  const bRow = Math.floor(boostPt.y / ch);
-  for (let dr = -1; dr <= 0; dr++) {
-    for (let dc = -1; dc <= 1; dc++) {
-      const rr = bRow + dr;
-      const cc = bCol + dc;
-      if (rr >= 0 && rr < rows && cc >= 0 && cc < cols && data[rr][cc] === 'track') {
-        data[rr][cc] = 'boost';
-      }
-    }
-  }
+  placeZone(def.hazardAt, 'hazard', 1);
+  placeZone(def.boostAt, 'boost', 1);
+  placeZone(def.pitAt, 'pit', 1);
 
-  // Pit zone
-  const pitIdx = Math.floor(smoothTrack.length * 0.7);
-  const pitPt = smoothTrack[pitIdx];
-  const pCol = Math.floor(pitPt.x / cw);
-  const pRow = Math.floor(pitPt.y / ch);
-  for (let dr = 0; dr <= 1; dr++) {
-    for (let dc = -1; dc <= 0; dc++) {
-      const rr = pRow + dr;
-      const cc = pCol + dc;
-      if (rr >= 0 && rr < rows && cc >= 0 && cc < cols && data[rr][cc] === 'track') {
-        data[rr][cc] = 'pit';
-      }
+  // Extra hazards for harder tracks
+  if (def.extraHazards) {
+    for (const h of def.extraHazards) {
+      placeZone(h, 'hazard', 1);
     }
   }
 
@@ -266,8 +365,8 @@ function generateDefaultTrack() {
   };
 
   trackState = {
-    name: 'Wasteland Circuit',
-    laps: 3,
+    name: def.name,
+    laps: def.laps,
     grid: { cols, rows, data },
     waypoints,
     startPositions,
@@ -276,10 +375,14 @@ function generateDefaultTrack() {
     cellW: cw,
     cellH: ch,
     isCustom: false,
-    // Keep spline data for default track rendering
     _smoothTrack: smoothTrack,
     _normals: normals
   };
+}
+
+// Keep backward compat
+function generateDefaultTrack() {
+  generateTrackFromDef(0);
 }
 
 // ========================================
@@ -1564,60 +1667,357 @@ function drawMenu() {
   ctx.fillStyle = '#0a0a08';
   ctx.fillRect(0, 0, W, H);
 
-  // Animated background lines
+  // Animated background - moving diagonal lines
   const t = Date.now() / 1000;
-  ctx.strokeStyle = 'rgba(255,100,0,0.05)';
+  ctx.strokeStyle = 'rgba(255,100,0,0.04)';
   ctx.lineWidth = 1;
-  for (let i = 0; i < 20; i++) {
+  for (let i = 0; i < 30; i++) {
     ctx.beginPath();
-    ctx.moveTo(0, i * 35 + Math.sin(t + i) * 10);
-    ctx.lineTo(W, i * 35 + Math.cos(t + i) * 10);
+    ctx.moveTo(0, i * 25 + Math.sin(t + i * 0.5) * 12);
+    ctx.lineTo(W, i * 25 + Math.cos(t + i * 0.5) * 12);
+    ctx.stroke();
+  }
+  // Vertical accent lines
+  for (let i = 0; i < 15; i++) {
+    ctx.beginPath();
+    ctx.moveTo(i * 65 + Math.sin(t * 0.7 + i) * 8, 0);
+    ctx.lineTo(i * 65 + Math.cos(t * 0.7 + i) * 8, H);
     ctx.stroke();
   }
 
-  // Title
+  // Title with glow effect
+  ctx.shadowColor = '#ff6600';
+  ctx.shadowBlur = 20;
   ctx.fillStyle = '#ff6600';
   ctx.font = 'bold 56px monospace';
   ctx.textAlign = 'center';
-  ctx.fillText('WASTELAND', W / 2, 160);
+  ctx.fillText('WASTELAND', W / 2, 140);
   ctx.fillStyle = '#cc4400';
   ctx.font = 'bold 72px monospace';
-  ctx.fillText('RACERS', W / 2, 230);
+  ctx.fillText('RACERS', W / 2, 215);
+  ctx.shadowBlur = 0;
 
   // Subtitle
   ctx.fillStyle = '#886644';
-  ctx.font = '16px monospace';
-  ctx.fillText('POST-APOCALYPTIC COMBAT RACING', W / 2, 270);
-
-  // Track name
-  ctx.fillStyle = '#aa8866';
-  ctx.font = 'bold 18px monospace';
-  ctx.fillText(`TRACK: ${trackState.name}`, W / 2, 330);
-
-  // Controls
-  ctx.fillStyle = '#aa8866';
   ctx.font = '14px monospace';
-  ctx.fillText('ARROW KEYS or WASD - STEER & ACCELERATE', W / 2, 390);
-  ctx.fillText('SPACE - SHOOT CANNON', W / 2, 415);
-  ctx.fillText('M - FIRE MISSILE', W / 2, 440);
-  ctx.fillText('N - NITRO BOOST', W / 2, 465);
+  ctx.fillText('POST-APOCALYPTIC COMBAT RACING', W / 2, 250);
 
-  // Start prompt
-  ctx.fillStyle = Math.floor(Date.now() / 500) % 2 === 0 ? '#ff6600' : '#cc4400';
-  ctx.font = 'bold 24px monospace';
-  ctx.fillText('PRESS ENTER TO RACE', W / 2, 530);
+  // Decorative line
+  ctx.strokeStyle = '#ff6600';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(W / 2 - 200, 270);
+  ctx.lineTo(W / 2 + 200, 270);
+  ctx.stroke();
+  ctx.strokeStyle = '#663300';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(W / 2 - 250, 275);
+  ctx.lineTo(W / 2 + 250, 275);
+  ctx.stroke();
 
-  // Load track prompt
-  ctx.fillStyle = '#668844';
-  ctx.font = '16px monospace';
-  ctx.fillText('PRESS L TO LOAD CUSTOM TRACK', W / 2, 580);
+  // Menu options
+  const menuItems = [
+    { label: 'START RACE', desc: 'Choose a track and race' },
+    { label: 'HIGHSCORES', desc: 'View best times and records' }
+  ];
+
+  for (let i = 0; i < menuItems.length; i++) {
+    const y = 340 + i * 80;
+    const selected = menuSelection === i;
+
+    // Selection box
+    if (selected) {
+      ctx.fillStyle = 'rgba(255,102,0,0.15)';
+      ctx.fillRect(W / 2 - 200, y - 25, 400, 55);
+      ctx.strokeStyle = '#ff6600';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(W / 2 - 200, y - 25, 400, 55);
+    }
+
+    // Arrow indicator
+    if (selected) {
+      const blink = Math.floor(Date.now() / 300) % 2;
+      ctx.fillStyle = blink ? '#ff6600' : '#ff9933';
+      ctx.font = 'bold 24px monospace';
+      ctx.textAlign = 'right';
+      ctx.fillText('>', W / 2 - 160, y + 8);
+      ctx.textAlign = 'left';
+      ctx.fillText('<', W / 2 + 160, y + 8);
+    }
+
+    ctx.fillStyle = selected ? '#ff6600' : '#886644';
+    ctx.font = 'bold 28px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(menuItems[i].label, W / 2, y + 8);
+
+    ctx.fillStyle = selected ? '#aa8866' : '#554433';
+    ctx.font = '12px monospace';
+    ctx.fillText(menuItems[i].desc, W / 2, y + 26);
+  }
+
+  // Progress info
+  ctx.fillStyle = '#554433';
+  ctx.font = '14px monospace';
+  ctx.fillText(`Tracks Unlocked: ${progression.unlockedTracks}/${TRACK_DEFS.length}`, W / 2, 540);
+
+  // Wrenches & Money
+  ctx.fillStyle = '#ccc';
+  ctx.font = '14px monospace';
+  ctx.fillText(`Money: ${progression.money} | Total Wrenches: ${progression.totalWrenches}`, W / 2, 565);
+
+  // Controls hint
+  ctx.fillStyle = '#443322';
+  ctx.font = '12px monospace';
+  ctx.fillText('UP/DOWN to select  |  ENTER to confirm  |  L to load custom track', W / 2, 610);
+
+  // Controls reference
+  ctx.fillStyle = '#332211';
+  ctx.font = '11px monospace';
+  ctx.fillText('WASD/Arrows: Drive  |  SPACE: Cannon  |  M: Missile  |  N: Nitro', W / 2, 640);
 
   // Version info
-  ctx.fillStyle = '#444';
-  ctx.font = '11px monospace';
-  ctx.fillText('v2.0 - Zone System + Track Loading + Missiles', W / 2, 660);
+  ctx.fillStyle = '#333';
+  ctx.font = '10px monospace';
+  ctx.fillText('v3.0 - Menu + Progression + Highscores', W / 2, 680);
 
   ctx.textAlign = 'left';
+}
+
+// ========================================
+// TRACK SELECT SCREEN
+// ========================================
+
+let trackSelectCursor = 0;
+
+function drawTrackSelect() {
+  ctx.fillStyle = '#0a0a08';
+  ctx.fillRect(0, 0, W, H);
+
+  // Title
+  ctx.fillStyle = '#ff6600';
+  ctx.font = 'bold 36px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('SELECT TRACK', W / 2, 55);
+
+  // Decorative line
+  ctx.strokeStyle = '#663300';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(W / 2 - 200, 70);
+  ctx.lineTo(W / 2 + 200, 70);
+  ctx.stroke();
+
+  // Track list
+  for (let i = 0; i < TRACK_DEFS.length; i++) {
+    const def = TRACK_DEFS[i];
+    const y = 105 + i * 105;
+    const unlocked = i < progression.unlockedTracks;
+    const selected = trackSelectCursor === i;
+
+    // Background card
+    ctx.fillStyle = selected ? 'rgba(255,102,0,0.12)' : 'rgba(30,30,25,0.8)';
+    ctx.fillRect(80, y - 10, W - 160, 90);
+
+    if (selected) {
+      ctx.strokeStyle = '#ff6600';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(80, y - 10, W - 160, 90);
+    } else {
+      ctx.strokeStyle = unlocked ? '#443322' : '#222';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(80, y - 10, W - 160, 90);
+    }
+
+    if (unlocked) {
+      // Track number
+      ctx.fillStyle = selected ? '#ff6600' : '#886644';
+      ctx.font = 'bold 32px monospace';
+      ctx.textAlign = 'left';
+      ctx.fillText(`${i + 1}`, 105, y + 30);
+
+      // Track name
+      ctx.fillStyle = selected ? '#ff9933' : '#aa8866';
+      ctx.font = 'bold 22px monospace';
+      ctx.fillText(def.name, 150, y + 18);
+
+      // Difficulty
+      const diffColors = { 'EASY': '#44aa44', 'MEDIUM': '#aaaa44', 'HARD': '#cc6633', 'EXTREME': '#cc3333' };
+      ctx.fillStyle = diffColors[def.difficulty] || '#888';
+      ctx.font = 'bold 12px monospace';
+      ctx.fillText(`[${def.difficulty}]`, 150, y + 38);
+
+      // Description
+      ctx.fillStyle = '#666';
+      ctx.font = '12px monospace';
+      ctx.fillText(def.description, 150, y + 55);
+
+      // Laps info
+      ctx.fillStyle = '#555';
+      ctx.font = '11px monospace';
+      ctx.textAlign = 'right';
+      ctx.fillText(`${def.laps} LAPS`, W - 110, y + 18);
+
+      // Reward info
+      ctx.fillStyle = '#888';
+      ctx.fillText(`1st: $${def.reward[0]}`, W - 110, y + 38);
+
+      // Highscore
+      const hs = progression.highscores[def.name];
+      if (hs) {
+        ctx.fillStyle = '#44aa44';
+        ctx.fillText(`BEST: ${formatTime(hs.bestTime)}`, W - 110, y + 55);
+      } else {
+        ctx.fillStyle = '#443322';
+        ctx.fillText('NO RECORD', W - 110, y + 55);
+      }
+      ctx.textAlign = 'left';
+    } else {
+      // Locked track
+      ctx.fillStyle = '#333';
+      ctx.font = 'bold 32px monospace';
+      ctx.textAlign = 'left';
+      ctx.fillText(`${i + 1}`, 105, y + 30);
+
+      ctx.fillStyle = '#555';
+      ctx.font = 'bold 22px monospace';
+      ctx.fillText('LOCKED', 150, y + 18);
+
+      ctx.fillStyle = '#443322';
+      ctx.font = '12px monospace';
+      ctx.fillText(`Complete Track ${i} to unlock`, 150, y + 40);
+
+      // Lock icon
+      ctx.fillStyle = '#555';
+      ctx.font = 'bold 28px monospace';
+      ctx.textAlign = 'right';
+      ctx.fillText('[X]', W - 110, y + 30);
+      ctx.textAlign = 'left';
+    }
+  }
+
+  // Bottom controls
+  ctx.fillStyle = '#886644';
+  ctx.font = '14px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('UP/DOWN: Select  |  ENTER: Race  |  ESC: Back', W / 2, H - 25);
+  ctx.textAlign = 'left';
+}
+
+// ========================================
+// HIGHSCORES SCREEN
+// ========================================
+
+function drawHighscores() {
+  ctx.fillStyle = '#0a0a08';
+  ctx.fillRect(0, 0, W, H);
+
+  // Title
+  ctx.shadowColor = '#ff6600';
+  ctx.shadowBlur = 15;
+  ctx.fillStyle = '#ff6600';
+  ctx.font = 'bold 40px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('HALL OF FAME', W / 2, 70);
+  ctx.shadowBlur = 0;
+
+  // Decorative line
+  ctx.strokeStyle = '#663300';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(W / 2 - 200, 85);
+  ctx.lineTo(W / 2 + 200, 85);
+  ctx.stroke();
+
+  // Column headers
+  ctx.fillStyle = '#886644';
+  ctx.font = 'bold 14px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('#', 100, 120);
+  ctx.fillText('TRACK', 130, 120);
+  ctx.fillText('DIFFICULTY', 400, 120);
+  ctx.fillText('BEST TIME', 550, 120);
+  ctx.fillText('BEST POS', 700, 120);
+
+  ctx.strokeStyle = '#443322';
+  ctx.beginPath();
+  ctx.moveTo(90, 128);
+  ctx.lineTo(810, 128);
+  ctx.stroke();
+
+  // Track entries
+  for (let i = 0; i < TRACK_DEFS.length; i++) {
+    const def = TRACK_DEFS[i];
+    const y = 160 + i * 50;
+    const hs = progression.highscores[def.name];
+    const unlocked = i < progression.unlockedTracks;
+
+    // Row background
+    ctx.fillStyle = i % 2 === 0 ? 'rgba(30,30,25,0.5)' : 'rgba(20,20,15,0.5)';
+    ctx.fillRect(90, y - 15, 720, 40);
+
+    ctx.textAlign = 'left';
+    ctx.fillStyle = unlocked ? '#aa8866' : '#444';
+    ctx.font = 'bold 16px monospace';
+    ctx.fillText(`${i + 1}`, 100, y + 8);
+
+    ctx.fillStyle = unlocked ? '#cc9966' : '#555';
+    ctx.font = 'bold 18px monospace';
+    ctx.fillText(unlocked ? def.name : '???', 130, y + 8);
+
+    const diffColors = { 'EASY': '#44aa44', 'MEDIUM': '#aaaa44', 'HARD': '#cc6633', 'EXTREME': '#cc3333' };
+    ctx.fillStyle = unlocked ? (diffColors[def.difficulty] || '#888') : '#444';
+    ctx.font = '13px monospace';
+    ctx.fillText(unlocked ? def.difficulty : '---', 400, y + 8);
+
+    if (hs) {
+      ctx.fillStyle = '#44ee44';
+      ctx.font = 'bold 16px monospace';
+      ctx.fillText(formatTime(hs.bestTime), 550, y + 8);
+
+      const posColors = ['#ffd700', '#c0c0c0', '#cd7f32', '#888'];
+      ctx.fillStyle = posColors[hs.bestPosition - 1] || '#888';
+      ctx.fillText(`${hs.bestPosition}${getOrdinal(hs.bestPosition)}`, 700, y + 8);
+    } else {
+      ctx.fillStyle = '#444';
+      ctx.font = '14px monospace';
+      ctx.fillText(unlocked ? '-- : --' : '---', 550, y + 8);
+      ctx.fillText('---', 700, y + 8);
+    }
+  }
+
+  // Stats summary
+  const completedTracks = Object.keys(progression.highscores).length;
+  ctx.fillStyle = '#886644';
+  ctx.font = '14px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(`Tracks Completed: ${completedTracks}/${TRACK_DEFS.length}  |  Total Money Earned: $${progression.totalWrenches}`, W / 2, H - 80);
+
+  // Reset option
+  ctx.fillStyle = '#553322';
+  ctx.font = '12px monospace';
+  ctx.fillText('Press DELETE to reset all progress', W / 2, H - 50);
+
+  // Back
+  ctx.fillStyle = '#886644';
+  ctx.font = '16px monospace';
+  ctx.fillText('PRESS ESC OR ENTER TO GO BACK', W / 2, H - 20);
+  ctx.textAlign = 'left';
+}
+
+function formatTime(frames) {
+  const totalSecs = Math.floor(frames / 60);
+  const mins = Math.floor(totalSecs / 60);
+  const secs = totalSecs % 60;
+  const ms = Math.floor((frames % 60) / 60 * 100);
+  return `${mins}:${secs.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
+}
+
+function getOrdinal(n) {
+  if (n === 1) return 'st';
+  if (n === 2) return 'nd';
+  if (n === 3) return 'rd';
+  return 'th';
 }
 
 // ========================================
@@ -1639,14 +2039,37 @@ function drawCountdown() {
 // RESULTS SCREEN
 // ========================================
 
+let raceRewardClaimed = false;
+let lastRaceReward = 0;
+let lastRacePosition = 0;
+let isNewRecord = false;
+let trackUnlocked = false;
+
 function drawResults(cars) {
-  ctx.fillStyle = 'rgba(0,0,0,0.8)';
+  ctx.fillStyle = 'rgba(0,0,0,0.85)';
   ctx.fillRect(0, 0, W, H);
 
+  // Title
+  ctx.shadowColor = '#ff6600';
+  ctx.shadowBlur = 15;
   ctx.fillStyle = '#ff6600';
-  ctx.font = 'bold 48px monospace';
+  ctx.font = 'bold 44px monospace';
   ctx.textAlign = 'center';
-  ctx.fillText('RACE COMPLETE', W / 2, 120);
+  ctx.fillText('RACE COMPLETE', W / 2, 80);
+  ctx.shadowBlur = 0;
+
+  // Track name
+  ctx.fillStyle = '#886644';
+  ctx.font = '16px monospace';
+  ctx.fillText(trackState.name, W / 2, 110);
+
+  // Decorative line
+  ctx.strokeStyle = '#663300';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(W / 2 - 250, 125);
+  ctx.lineTo(W / 2 + 250, 125);
+  ctx.stroke();
 
   const sorted = [...cars].sort((a, b) => {
     if (a.finished && b.finished) return a.finishTime - b.finishTime;
@@ -1655,28 +2078,122 @@ function drawResults(cars) {
     return b.totalProgress - a.totalProgress;
   });
 
-  ctx.font = 'bold 24px monospace';
+  // Position colors
+  const posColors = ['#ffd700', '#c0c0c0', '#cd7f32', '#666'];
+
+  // Results table
+  ctx.font = 'bold 14px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#886644';
+  ctx.fillText('POS', 200, 160);
+  ctx.fillText('RACER', 260, 160);
+  ctx.fillText('TIME', 500, 160);
+  ctx.fillText('REWARD', 650, 160);
+
+  ctx.strokeStyle = '#443322';
+  ctx.beginPath();
+  ctx.moveTo(190, 168);
+  ctx.lineTo(750, 168);
+  ctx.stroke();
+
   for (let i = 0; i < sorted.length; i++) {
     const c = sorted[i];
+    const y = 195 + i * 45;
+    const isP = c === player;
+    const def = TRACK_DEFS[progression.currentTrackIndex] || TRACK_DEFS[0];
+    const reward = def.reward[i] || 0;
+
+    // Highlight player row
+    if (isP) {
+      ctx.fillStyle = 'rgba(255,102,0,0.15)';
+      ctx.fillRect(185, y - 18, 575, 38);
+      ctx.strokeStyle = '#ff6600';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(185, y - 18, 575, 38);
+    }
+
+    // Position badge
+    ctx.fillStyle = posColors[i] || '#666';
+    ctx.font = 'bold 22px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText(`${i + 1}${getOrdinal(i + 1)}`, 200, y + 8);
+
+    // Name
     ctx.fillStyle = c.color;
-    const timeStr = c.finished
-      ? `${Math.floor(c.finishTime / 3600)}:${(Math.floor(c.finishTime / 60) % 60).toString().padStart(2, '0')}`
-      : 'DNF';
-    ctx.fillText(`${i + 1}. ${c.name}  ${timeStr}`, W / 2, 200 + i * 50);
+    ctx.font = 'bold 18px monospace';
+    ctx.fillText(c.name, 260, y + 8);
+
+    // Time
+    const timeStr = c.finished ? formatTime(c.finishTime) : 'DNF';
+    ctx.fillStyle = c.finished ? '#aaa' : '#663333';
+    ctx.font = '16px monospace';
+    ctx.fillText(timeStr, 500, y + 8);
+
+    // Reward
+    if (isP) {
+      ctx.fillStyle = '#44ee44';
+      ctx.font = 'bold 16px monospace';
+      ctx.fillText(`+$${reward}`, 650, y + 8);
+    }
   }
 
-  // Award wrenches based on finishing position
+  // Player reward summary
   const playerIdx = sorted.indexOf(player);
-  const wrenchAward = [3, 2, 1, 0][playerIdx] || 0;
+  const def = TRACK_DEFS[progression.currentTrackIndex] || TRACK_DEFS[0];
+  lastRaceReward = def.reward[playerIdx] || 0;
+  lastRacePosition = playerIdx + 1;
+
+  const summaryY = 400;
+  ctx.fillStyle = 'rgba(30,30,25,0.8)';
+  ctx.fillRect(200, summaryY - 10, 500, 90);
+  ctx.strokeStyle = '#443322';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(200, summaryY - 10, 500, 90);
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#44ee44';
+  ctx.font = 'bold 22px monospace';
+  ctx.fillText(`+$${lastRaceReward} EARNED`, W / 2, summaryY + 20);
 
   ctx.fillStyle = '#ccc';
-  ctx.font = '18px monospace';
-  ctx.fillText(`+${wrenchAward} WRENCHES EARNED`, W / 2, 430);
+  ctx.font = '14px monospace';
+  ctx.fillText(`Position: ${lastRacePosition}${getOrdinal(lastRacePosition)}  |  Money: $${progression.money}`, W / 2, summaryY + 48);
+
+  // New record indicator
+  if (isNewRecord) {
+    const blink = Math.floor(Date.now() / 250) % 2;
+    ctx.fillStyle = blink ? '#ffd700' : '#ff9900';
+    ctx.font = 'bold 20px monospace';
+    ctx.fillText('*** NEW RECORD! ***', W / 2, summaryY + 72);
+  }
+
+  // Track unlocked indicator
+  if (trackUnlocked) {
+    const blink = Math.floor(Date.now() / 300) % 2;
+    ctx.fillStyle = blink ? '#44ff44' : '#22aa22';
+    ctx.font = 'bold 18px monospace';
+    ctx.fillText('NEW TRACK UNLOCKED!', W / 2, summaryY + 100);
+  }
+
+  // Bottom options
+  const optionY = trackUnlocked ? summaryY + 135 : summaryY + 115;
+
+  // Check if player finished (can progress to next track)
+  const canProgress = player.finished && progression.currentTrackIndex < TRACK_DEFS.length - 1
+    && progression.currentTrackIndex + 1 < progression.unlockedTracks;
+
+  ctx.fillStyle = '#ff6600';
+  ctx.font = 'bold 18px monospace';
+  ctx.fillText('ENTER - UPGRADE SHOP', W / 2, optionY);
+
+  if (canProgress) {
+    ctx.fillStyle = '#44aa44';
+    ctx.fillText('N - NEXT TRACK', W / 2, optionY + 30);
+  }
 
   ctx.fillStyle = '#886644';
-  ctx.font = '18px monospace';
-  ctx.fillText('PRESS ENTER TO CONTINUE TO SHOP', W / 2, 500);
-  ctx.fillText('PRESS R TO RACE AGAIN', W / 2, 540);
+  ctx.font = '14px monospace';
+  ctx.fillText('R - Race Again  |  ESC - Main Menu', W / 2, optionY + 55);
 
   ctx.textAlign = 'left';
 }
@@ -1686,53 +2203,166 @@ function drawResults(cars) {
 // ========================================
 
 function drawShop(player) {
-  ctx.fillStyle = 'rgba(10,10,8,0.95)';
+  ctx.fillStyle = '#0a0a08';
   ctx.fillRect(0, 0, W, H);
 
+  // Title
+  ctx.shadowColor = '#ff6600';
+  ctx.shadowBlur = 15;
   ctx.fillStyle = '#ff6600';
-  ctx.font = 'bold 40px monospace';
+  ctx.font = 'bold 36px monospace';
   ctx.textAlign = 'center';
-  ctx.fillText('UPGRADE SHOP', W / 2, 80);
+  ctx.fillText('UPGRADE SHOP', W / 2, 55);
+  ctx.shadowBlur = 0;
 
-  ctx.fillStyle = '#ccc';
-  ctx.font = '16px monospace';
-  ctx.fillText(`WRENCHES: ${player.wrenches}`, W / 2, 120);
+  // Money display
+  ctx.fillStyle = 'rgba(30,30,25,0.8)';
+  ctx.fillRect(W / 2 - 150, 70, 300, 35);
+  ctx.strokeStyle = '#443322';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(W / 2 - 150, 70, 300, 35);
 
+  ctx.fillStyle = '#44ee44';
+  ctx.font = 'bold 18px monospace';
+  ctx.fillText(`MONEY: $${progression.money}`, W / 2, 93);
+
+  // Next track info
+  ctx.fillStyle = '#886644';
+  ctx.font = '13px monospace';
+  const nextTrackName = TRACK_DEFS[progression.currentTrackIndex] ? TRACK_DEFS[progression.currentTrackIndex].name : '';
+  ctx.fillText(`Next Race: ${nextTrackName}`, W / 2, 125);
+
+  // Upgrade categories
   const upgrades = [
-    { name: 'SPEED', key: '1', cost: 1, current: player.speedUpgrade, max: 5 },
-    { name: 'ACCELERATION', key: '2', cost: 1, current: player.accelUpgrade, max: 5 },
-    { name: 'TIRES', key: '3', cost: 1, current: player.tireUpgrade, max: 5 },
-    { name: 'AMMO (+5)', key: '4', cost: 1, current: 0, max: 99 },
-    { name: 'NITRO (+1)', key: '5', cost: 2, current: 0, max: 99 },
-    { name: 'MISSILE (+1)', key: '6', cost: 3, current: 0, max: 99 },
+    { name: 'TOP SPEED', key: '1', cost: 2, current: player.speedUpgrade, max: 5, desc: '+0.3 max speed per level', cat: 'permanent' },
+    { name: 'ACCELERATION', key: '2', cost: 2, current: player.accelUpgrade, max: 5, desc: '+0.01 acceleration per level', cat: 'permanent' },
+    { name: 'TIRES/HANDLING', key: '3', cost: 2, current: player.tireUpgrade, max: 5, desc: '+0.005 turn speed per level', cat: 'permanent' },
+    { name: 'AMMO PACK (+5)', key: '4', cost: 1, current: player.ammo, max: 99, desc: 'Cannon ammunition', cat: 'consumable' },
+    { name: 'NITRO TANK (+1)', key: '5', cost: 3, current: player.nitro, max: 99, desc: 'Nitro boost charge', cat: 'consumable' },
+    { name: 'MISSILE (+1)', key: '6', cost: 4, current: player.missiles, max: 99, desc: 'Homing missile', cat: 'consumable' },
   ];
 
+  // Section: Permanent upgrades
+  ctx.fillStyle = '#aa6633';
+  ctx.font = 'bold 14px monospace';
   ctx.textAlign = 'left';
-  for (let i = 0; i < upgrades.length; i++) {
-    const u = upgrades[i];
-    const y = 180 + i * 60;
-    ctx.fillStyle = '#886644';
-    ctx.font = '14px monospace';
-    ctx.fillText(`[${u.key}]`, 200, y);
-    ctx.fillStyle = '#ff6600';
-    ctx.font = 'bold 18px monospace';
-    ctx.fillText(u.name, 240, y);
-    ctx.fillStyle = '#888';
-    ctx.font = '14px monospace';
-    ctx.fillText(`Cost: ${u.cost} wrench${u.cost > 1 ? 'es' : ''}`, 500, y);
+  ctx.fillText('VEHICLE UPGRADES', 130, 160);
+  ctx.strokeStyle = '#443322';
+  ctx.beginPath();
+  ctx.moveTo(130, 168);
+  ctx.lineTo(770, 168);
+  ctx.stroke();
 
-    if (u.max <= 5) {
-      for (let j = 0; j < u.max; j++) {
-        ctx.fillStyle = j < u.current ? '#ff6600' : '#333';
-        ctx.fillRect(500 + j * 20, y + 8, 15, 10);
-      }
+  for (let i = 0; i < 3; i++) {
+    const u = upgrades[i];
+    const y = 190 + i * 65;
+    const canAfford = progression.money >= u.cost && u.current < u.max;
+    const maxed = u.current >= u.max;
+
+    // Card background
+    ctx.fillStyle = canAfford ? 'rgba(40,35,20,0.8)' : 'rgba(20,20,15,0.6)';
+    ctx.fillRect(120, y - 8, 660, 52);
+    ctx.strokeStyle = canAfford ? '#665533' : '#332211';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(120, y - 8, 660, 52);
+
+    // Key indicator
+    ctx.fillStyle = canAfford ? '#ff6600' : '#444';
+    ctx.font = 'bold 20px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(`[${u.key}]`, 155, y + 20);
+
+    // Name
+    ctx.fillStyle = canAfford ? '#ff9933' : '#666';
+    ctx.font = 'bold 18px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText(u.name, 190, y + 14);
+
+    // Description
+    ctx.fillStyle = '#555';
+    ctx.font = '11px monospace';
+    ctx.fillText(u.desc, 190, y + 32);
+
+    // Upgrade bars
+    const barX = 520;
+    for (let j = 0; j < u.max; j++) {
+      ctx.fillStyle = j < u.current ? '#ff6600' : '#2a2218';
+      ctx.fillRect(barX + j * 28, y + 5, 22, 18);
+      ctx.strokeStyle = j < u.current ? '#cc4400' : '#443322';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(barX + j * 28, y + 5, 22, 18);
     }
+
+    // Cost
+    ctx.textAlign = 'right';
+    if (maxed) {
+      ctx.fillStyle = '#44aa44';
+      ctx.font = 'bold 14px monospace';
+      ctx.fillText('MAX', 770, y + 20);
+    } else {
+      ctx.fillStyle = canAfford ? '#44ee44' : '#663333';
+      ctx.font = '14px monospace';
+      ctx.fillText(`$${u.cost}`, 770, y + 20);
+    }
+    ctx.textAlign = 'left';
   }
 
-  ctx.fillStyle = '#886644';
-  ctx.font = '18px monospace';
+  // Section: Consumables
+  ctx.fillStyle = '#aa6633';
+  ctx.font = 'bold 14px monospace';
+  ctx.fillText('SUPPLIES', 130, 395);
+  ctx.strokeStyle = '#443322';
+  ctx.beginPath();
+  ctx.moveTo(130, 403);
+  ctx.lineTo(770, 403);
+  ctx.stroke();
+
+  for (let i = 3; i < 6; i++) {
+    const u = upgrades[i];
+    const y = 420 + (i - 3) * 55;
+    const canAfford = progression.money >= u.cost;
+
+    // Card background
+    ctx.fillStyle = canAfford ? 'rgba(40,35,20,0.8)' : 'rgba(20,20,15,0.6)';
+    ctx.fillRect(120, y - 8, 660, 42);
+    ctx.strokeStyle = canAfford ? '#665533' : '#332211';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(120, y - 8, 660, 42);
+
+    // Key indicator
+    ctx.fillStyle = canAfford ? '#ff6600' : '#444';
+    ctx.font = 'bold 20px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(`[${u.key}]`, 155, y + 18);
+
+    // Name
+    ctx.fillStyle = canAfford ? '#ff9933' : '#666';
+    ctx.font = 'bold 16px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText(u.name, 190, y + 14);
+
+    // Description + current stock
+    ctx.fillStyle = '#555';
+    ctx.font = '11px monospace';
+    ctx.fillText(`${u.desc}  |  In stock: ${u.current}`, 190, y + 30);
+
+    // Cost
+    ctx.textAlign = 'right';
+    ctx.fillStyle = canAfford ? '#44ee44' : '#663333';
+    ctx.font = '14px monospace';
+    ctx.fillText(`$${u.cost}`, 770, y + 18);
+    ctx.textAlign = 'left';
+  }
+
+  // Bottom controls
+  ctx.fillStyle = '#ff6600';
+  ctx.font = 'bold 18px monospace';
   ctx.textAlign = 'center';
-  ctx.fillText('PRESS ENTER TO RACE', W / 2, 580);
+  ctx.fillText('PRESS ENTER TO START RACE', W / 2, 610);
+
+  ctx.fillStyle = '#554433';
+  ctx.font = '12px monospace';
+  ctx.fillText('ESC - Back to Menu', W / 2, 640);
   ctx.textAlign = 'left';
 }
 
@@ -1749,8 +2379,6 @@ const cars = [player, ai1, ai2, ai3];
 // Generate default track on startup
 generateDefaultTrack();
 
-let resultsWrenchesAwarded = false;
-
 function resetRace() {
   for (let i = 0; i < cars.length; i++) {
     cars[i].reset(i);
@@ -1758,7 +2386,9 @@ function resetRace() {
   bullets = [];
   explosions = [];
   raceTime = 0;
-  resultsWrenchesAwarded = false;
+  raceRewardClaimed = false;
+  isNewRecord = false;
+  trackUnlocked = false;
   generateObstacles();
 }
 
@@ -1770,73 +2400,197 @@ const keys = {};
 document.addEventListener('keydown', e => {
   keys[e.key] = true;
 
+  // --- MENU STATE ---
   if (gameState === STATE.MENU) {
+    if (e.key === 'ArrowUp' || e.key === 'w') {
+      menuSelection = Math.max(0, menuSelection - 1);
+    }
+    if (e.key === 'ArrowDown' || e.key === 's') {
+      menuSelection = Math.min(1, menuSelection + 1);
+    }
     if (e.key === 'Enter') {
-      gameState = STATE.COUNTDOWN;
-      countdownTimer = 240;
-      resetRace();
+      if (menuSelection === 0) {
+        // Go to track select
+        gameState = STATE.TRACK_SELECT;
+        trackSelectCursor = progression.currentTrackIndex;
+      } else if (menuSelection === 1) {
+        // Go to highscores
+        gameState = STATE.HIGHSCORES;
+      }
     }
     if (e.key === 'l' || e.key === 'L') {
       document.getElementById('track-file-input').click();
     }
   }
 
-  if (gameState === STATE.RESULTS) {
+  // --- TRACK SELECT STATE ---
+  else if (gameState === STATE.TRACK_SELECT) {
+    if (e.key === 'ArrowUp' || e.key === 'w') {
+      trackSelectCursor = Math.max(0, trackSelectCursor - 1);
+    }
+    if (e.key === 'ArrowDown' || e.key === 's') {
+      trackSelectCursor = Math.min(TRACK_DEFS.length - 1, trackSelectCursor + 1);
+    }
     if (e.key === 'Enter') {
-      // Award wrenches before going to shop
-      if (!resultsWrenchesAwarded) {
-        const sorted = [...cars].sort((a, b) => {
-          if (a.finished && b.finished) return a.finishTime - b.finishTime;
-          if (a.finished) return -1;
-          if (b.finished) return 1;
-          return b.totalProgress - a.totalProgress;
-        });
-        const playerIdx = sorted.indexOf(player);
-        const wrenchAward = [3, 2, 1, 0][playerIdx] || 0;
-        player.wrenches += wrenchAward;
-        resultsWrenchesAwarded = true;
+      if (trackSelectCursor < progression.unlockedTracks) {
+        // Select this track and go to shop
+        progression.currentTrackIndex = trackSelectCursor;
+        generateTrackFromDef(progression.currentTrackIndex);
+        gameState = STATE.SHOP;
       }
-      gameState = STATE.SHOP;
-    } else if (e.key === 'r' || e.key === 'R') {
-      gameState = STATE.COUNTDOWN;
-      countdownTimer = 240;
-      resetRace();
+    }
+    if (e.key === 'Escape') {
+      gameState = STATE.MENU;
     }
   }
 
-  if (gameState === STATE.SHOP) {
+  // --- HIGHSCORES STATE ---
+  else if (gameState === STATE.HIGHSCORES) {
+    if (e.key === 'Escape' || e.key === 'Enter') {
+      gameState = STATE.MENU;
+    }
+    if (e.key === 'Delete') {
+      // Reset all progress
+      progression = {
+        currentTrackIndex: 0,
+        unlockedTracks: 1,
+        totalWrenches: 0,
+        money: 0,
+        highscores: {}
+      };
+      player.speedUpgrade = 0;
+      player.accelUpgrade = 0;
+      player.tireUpgrade = 0;
+      player.wrenches = 0;
+      saveProgress();
+    }
+  }
+
+  // --- RESULTS STATE ---
+  else if (gameState === STATE.RESULTS) {
     if (e.key === 'Enter') {
+      // Claim reward and go to shop
+      claimRaceReward();
+      gameState = STATE.SHOP;
+    } else if (e.key === 'r' || e.key === 'R') {
+      claimRaceReward();
       gameState = STATE.COUNTDOWN;
       countdownTimer = 240;
       resetRace();
+    } else if (e.key === 'n' || e.key === 'N') {
+      // Next track
+      if (player.finished && progression.currentTrackIndex < TRACK_DEFS.length - 1
+          && progression.currentTrackIndex + 1 < progression.unlockedTracks) {
+        claimRaceReward();
+        progression.currentTrackIndex++;
+        generateTrackFromDef(progression.currentTrackIndex);
+        gameState = STATE.SHOP;
+      }
+    } else if (e.key === 'Escape') {
+      claimRaceReward();
+      gameState = STATE.MENU;
     }
-    if (e.key === '1' && player.wrenches >= 1 && player.speedUpgrade < 5) {
+  }
+
+  // --- SHOP STATE ---
+  else if (gameState === STATE.SHOP) {
+    if (e.key === 'Enter') {
+      generateTrackFromDef(progression.currentTrackIndex);
+      gameState = STATE.COUNTDOWN;
+      countdownTimer = 240;
+      resetRace();
+      saveProgress();
+    }
+    if (e.key === 'Escape') {
+      saveProgress();
+      gameState = STATE.MENU;
+    }
+    // Permanent upgrades cost money from progression
+    if (e.key === '1' && progression.money >= 2 && player.speedUpgrade < 5) {
       player.speedUpgrade++;
-      player.wrenches--;
+      progression.money -= 2;
+      saveProgress();
     }
-    if (e.key === '2' && player.wrenches >= 1 && player.accelUpgrade < 5) {
+    if (e.key === '2' && progression.money >= 2 && player.accelUpgrade < 5) {
       player.accelUpgrade++;
-      player.wrenches--;
+      progression.money -= 2;
+      saveProgress();
     }
-    if (e.key === '3' && player.wrenches >= 1 && player.tireUpgrade < 5) {
+    if (e.key === '3' && progression.money >= 2 && player.tireUpgrade < 5) {
       player.tireUpgrade++;
-      player.wrenches--;
+      progression.money -= 2;
+      saveProgress();
     }
-    if (e.key === '4' && player.wrenches >= 1) {
+    // Consumables
+    if (e.key === '4' && progression.money >= 1) {
       player.ammo += 5;
-      player.wrenches--;
+      progression.money -= 1;
+      saveProgress();
     }
-    if (e.key === '5' && player.wrenches >= 2) {
+    if (e.key === '5' && progression.money >= 3) {
       player.nitro++;
-      player.wrenches -= 2;
+      progression.money -= 3;
+      saveProgress();
     }
-    if (e.key === '6' && player.wrenches >= 3) {
+    if (e.key === '6' && progression.money >= 4) {
       player.missiles++;
-      player.wrenches -= 3;
+      progression.money -= 4;
+      saveProgress();
     }
   }
 });
 document.addEventListener('keyup', e => { keys[e.key] = false; });
+
+// --- Claim race reward helper ---
+function claimRaceReward() {
+  if (raceRewardClaimed) return;
+  raceRewardClaimed = true;
+
+  const sorted = [...cars].sort((a, b) => {
+    if (a.finished && b.finished) return a.finishTime - b.finishTime;
+    if (a.finished) return -1;
+    if (b.finished) return 1;
+    return b.totalProgress - a.totalProgress;
+  });
+
+  const playerIdx = sorted.indexOf(player);
+  const def = TRACK_DEFS[progression.currentTrackIndex] || TRACK_DEFS[0];
+  const reward = def.reward[playerIdx] || 0;
+
+  // Add money
+  progression.money += reward;
+  progression.totalWrenches += reward;
+
+  // Save highscore
+  const trackName = trackState.name;
+  const existing = progression.highscores[trackName];
+  isNewRecord = false;
+
+  if (player.finished) {
+    if (!existing || player.finishTime < existing.bestTime) {
+      progression.highscores[trackName] = {
+        bestTime: player.finishTime,
+        bestPosition: playerIdx + 1
+      };
+      isNewRecord = true;
+    } else if (playerIdx + 1 < existing.bestPosition) {
+      existing.bestPosition = playerIdx + 1;
+    }
+
+    // Unlock next track if player finished (any position)
+    if (progression.currentTrackIndex + 1 >= progression.unlockedTracks
+        && progression.currentTrackIndex + 1 < TRACK_DEFS.length) {
+      progression.unlockedTracks = progression.currentTrackIndex + 2;
+      trackUnlocked = true;
+    } else {
+      trackUnlocked = false;
+    }
+  } else {
+    trackUnlocked = false;
+  }
+
+  saveProgress();
+}
 
 // ========================================
 // MAIN GAME LOOP
@@ -1848,6 +2602,14 @@ function gameLoop() {
   switch (gameState) {
     case STATE.MENU:
       drawMenu();
+      break;
+
+    case STATE.TRACK_SELECT:
+      drawTrackSelect();
+      break;
+
+    case STATE.HIGHSCORES:
+      drawHighscores();
       break;
 
     case STATE.COUNTDOWN:
@@ -1878,6 +2640,7 @@ function gameLoop() {
         player._resultDelay--;
         if (player._resultDelay <= 0) {
           gameState = STATE.RESULTS;
+          raceRewardClaimed = false;
           player._resultDelay = 0;
         }
       }
@@ -1901,6 +2664,17 @@ function gameLoop() {
   }
 
   requestAnimationFrame(gameLoop);
+}
+
+// --- Load saved progress and apply ---
+loadProgress();
+if (pendingUpgrades) {
+  player.speedUpgrade = pendingUpgrades.speed || 0;
+  player.accelUpgrade = pendingUpgrades.accel || 0;
+  player.tireUpgrade = pendingUpgrades.tires || 0;
+  player.wrenches = pendingUpgrades.wrenches || 0;
+  player.applyUpgrades();
+  pendingUpgrades = null;
 }
 
 // Start

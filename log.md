@@ -125,3 +125,84 @@
 - Updated log.md with all session 3 changes
 - Updated todo.md with completed Phase 2 items
 - Updated memory.md with new technical decisions
+
+## 2026-02-12 - Session 4: Menu, Progression & Highscores (v3.0)
+
+### 17:00 - Planning new features
+- User requested: start menu, track progression, equipment shop, money system, highscore list
+- Reviewed reference images showing Badlands-style arcade racing layout
+- Planned: 5 built-in tracks, progression system, localStorage save, enhanced UI
+
+### 17:10 - Added progression system
+- New game states: TRACK_SELECT, HIGHSCORES (added to STATE object)
+- Progression object tracks: currentTrackIndex, unlockedTracks, totalWrenches, money, highscores
+- Save/load system using localStorage (wasteland-racers-save key)
+- Player upgrades persist across sessions
+
+### 17:15 - Created 5 built-in track definitions
+- Track 1: "Wasteland Circuit" (EASY, 3 laps) - classic oval
+- Track 2: "Scorched Serpent" (MEDIUM, 3 laps) - winding S-curves
+- Track 3: "Rust Ring" (MEDIUM, 4 laps) - oval with chicane
+- Track 4: "Toxic Speedway" (HARD, 3 laps) - hazard-heavy, extra hazard zones
+- Track 5: "Thunderdome" (EXTREME, 4 laps) - complex multi-turn, triple hazards
+- Each track defined by spline points, difficulty, laps, description, reward table
+- generateTrackFromDef() builds any track from definition index
+
+### 17:20 - Built proper start menu
+- Two-option menu: START RACE and HIGHSCORES
+- Arrow key navigation with visual selection indicator
+- Animated background with moving lines
+- Title with glow effect
+- Shows progression info (tracks unlocked, money)
+- Controls reference at bottom
+
+### 17:25 - Added track selection screen
+- Lists all 5 tracks with locked/unlocked status
+- Shows: track number, name, difficulty (color-coded), description, laps, reward
+- Displays best time per track from highscores
+- Locked tracks show requirement (complete previous track)
+- Card-based layout with hover highlight
+
+### 17:30 - Enhanced results screen
+- Table layout showing all racers with position, name, time, reward
+- Player row highlighted with orange border
+- Money earned summary box
+- NEW RECORD indicator with blinking animation
+- NEW TRACK UNLOCKED indicator when completing a track for first time
+- Options: Enter=Shop, N=Next Track, R=Race Again, ESC=Menu
+
+### 17:35 - Enhanced shop screen
+- Split into two sections: Vehicle Upgrades (permanent) and Supplies (consumables)
+- Card-based layout for each upgrade
+- Visual upgrade bars for permanent upgrades (5 levels)
+- Shows current stock for consumables
+- Money-based economy (separate from wrenches)
+- Cost display with color coding (affordable=green, unaffordable=red)
+- Upgrade costs: Speed/Accel/Tires=$2, Ammo=$1, Nitro=$3, Missile=$4
+
+### 17:40 - Added highscore system
+- Hall of Fame screen showing all tracks with best times and positions
+- Color-coded position badges (gold/silver/bronze)
+- Track completion counter and total money earned stats
+- DELETE key to reset all progress
+- Data persisted in localStorage
+
+### 17:45 - Implemented track progression
+- Complete any track (finish the race) to unlock the next track
+- Track 1 unlocked by default, rest locked
+- Progression saved to localStorage
+- Money reward system: position-based rewards per track (e.g. 1st on Track 1 = $4)
+- claimRaceReward() handles: money, highscore save, track unlock
+
+### 17:50 - Updated input handling and game loop
+- All 7 game states handled in game loop switch
+- Menu: UP/DOWN to select, ENTER to confirm
+- Track Select: UP/DOWN, ENTER to race, ESC back
+- Highscores: ESC/ENTER back, DELETE to reset
+- Results: ENTER=shop, R=retry, N=next track, ESC=menu
+- Shop: number keys for purchases (uses progression.money), ENTER=race, ESC=menu
+- raceRewardClaimed flag prevents double-claiming rewards
+
+### 17:55 - Updated documentation
+- Updated log.md with all session 4 changes
+- Updated todo.md with completed Phase 3 items
